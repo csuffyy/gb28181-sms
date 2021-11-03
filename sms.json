@@ -1,0 +1,13 @@
+{
+    "RtmpListen":":1935",
+    "HttpListen":":80",
+    "HttpsListen":":443",
+    "HttpsCrt":"ca/certificate.crt",
+    "HttpsKey":"ca/private.key",
+    "HttpsUse":false,
+    "LogFile":"sms.log",
+    "===NOTE===":"LogFileSize单位为MB,LogFileNum单位为个,LogSaveDay单位为天",
+    "LogFileSize":300,
+    "LogFileNum":10,
+    "LogSaveDay":15
+}
