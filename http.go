@@ -31,6 +31,6 @@ func HttpServer(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Connection", "Keep-Alive")
 	w.Header().Set("Content-length", strconv.Itoa(len(rsps)))
-	w.Header().Set("Server", "StreamMediaServer")
+	w.Header().Set("Server", AppName)
 	w.Write(rsps)
 }

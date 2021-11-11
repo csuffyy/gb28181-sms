@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"flag"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -24,6 +25,7 @@ var (
 	h, v, d, u bool
 	c          string
 	conf       Config
+	Streams    map[string]*StreamPublisher
 )
 
 type Config struct {
@@ -37,6 +39,55 @@ type Config struct {
 	LogFileSize int
 	LogFileNum  int
 	LogSaveDay  int
+}
+
+type StreamPublisher struct {
+	Type      string // rtmp or gb28181
+	Publisher *Stream
+	Players   map[string]*Stream
+}
+
+type StreamPlayer struct {
+	Type   string // rtmp or flv
+	stream *Stream
+}
+
+type Stream struct {
+	Conn                net.Conn
+	ChunkSize           uint32
+	WindowAckSize       uint32
+	RemoteChunkSize     uint32
+	RemoteWindowAckSize uint32
+	//Chunks              map[uint32]Chunk
+	//HandleMessageDone   bool
+	IsPublisher   bool
+	TransmitStart bool
+	//received            uint32
+	//ackReceived         uint32
+	StreamKey string // Domain + App + StreamName
+	//Publisher           RtmpPublisher
+	//Players             []RtmpPlayer
+	//AmfInfo
+	//MediaInfo
+	//Statistics
+	Cache
+}
+
+type Cache struct {
+	/*
+		GopStart     bool
+		GopNum       int
+		GopCount     int
+		GopNextIndex int
+		GopIndex     int
+		GopPacket    []*Packet
+		MetaFull     bool
+		MetaPacket   *Packet
+		AudioFull    bool
+		AudioPacket  *Packet
+		VideoFull    bool
+		VideoPacket  *Packet
+	*/
 }
 
 func InitConf(file string) {
@@ -90,6 +141,7 @@ func (p *program) run() {
 	InitLog(conf.LogFile)
 
 	go RtmpServer()
+	//go SipServer()
 
 	http.HandleFunc("/", HttpServer)
 

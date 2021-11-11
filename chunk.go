@@ -38,9 +38,9 @@ type Chunk struct {
 }
 
 func ChunkMerge(s *Stream, c *Chunk) error {
-	var fb float64
+	var bh uint8 // basic header
 	for {
-		//binary.Read(buf, binary.BigEndian, &fb)
+		//binary.Read(s.Conn, binary.BigEndian, &bh)
 		u, _ := ReadByteToUint32BE(s.Conn, 1)
 		fmt := u >> 6
 		csid := u & 0x3f
