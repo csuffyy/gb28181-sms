@@ -5,6 +5,15 @@ import (
 	"log"
 )
 
+// 以小端方式写，以小端方式读
+// 以大端方式写，以大端方式读
+// 0x11223344	0x11 为高位，0x44为低位
+// b[4]			b[0] 为低地址, b[3] 为高地址
+// uint32		b[0] b[1] b[2] b[3]
+// 0x11223344	0x44 0x33 0x22 0x11 小端 低位在低地址,低地址放低位
+// 0x11223344	0x11 0x22 0x33 0x44 大端 低位在高地址,低地址放高位
+// /usr/local/go/src/encoding/binary/binary.go
+
 type ByteOrder string
 
 const (
@@ -45,7 +54,7 @@ func ByteToUint32(b []byte, bo ByteOrder) uint32 {
 	return u
 }
 
-func ByteToUint64BE(b []byte, bo ByteOrder) uint64 {
+func ByteToUint64(b []byte, bo ByteOrder) uint64 {
 	n := len(b)
 	if n > 8 {
 		n = 8
@@ -62,78 +71,193 @@ func ByteToUint64BE(b []byte, bo ByteOrder) uint64 {
 }
 
 // uintX 以大/小端字节序 转 []byte
-func Uint16ToByte(u uint16, bo ByteOrder) []byte {
-	var b []byte
+func Uint16ToByte(u uint16, b []byte, bo ByteOrder) []byte {
+	bb := make([]byte, 2)
 	for i := 0; i < 2; i++ {
 		if bo == BE {
-			b[i] = byte(u >> uint16((4-i-1)*8))
+			bb[i] = byte(u >> uint16((4-i-1)*8))
 		} else {
-			b[i] = byte(u >> uint16(i*8))
+			bb[i] = byte(u >> uint16(i*8))
 		}
 	}
-	return b
+	if b != nil {
+		copy(b, bb)
+	}
+	return bb
 }
 
-func Uint32ToByteBE(u uint32, bo ByteOrder) []byte {
-	var b []byte
+func Uint32ToByte(u uint32, b []byte, bo ByteOrder) []byte {
+	bb := make([]byte, 4)
 	for i := 0; i < 4; i++ {
 		if bo == BE {
-			b[i] = byte(u >> uint32((4-i-1)*8))
+			bb[i] = byte(u >> uint32((4-i-1)*8))
 		} else {
-			b[i] = byte(u >> uint32(i*8))
+			bb[i] = byte(u >> uint32(i*8))
 		}
 	}
-	return b
+	if b != nil {
+		copy(b, bb)
+	}
+	return bb
 }
 
-func Uint64ToByteBE(u uint64, bo ByteOrder) []byte {
-	var b []byte
+func Uint64ToByte(u uint64, b []byte, bo ByteOrder) []byte {
+	bb := make([]byte, 8)
 	for i := 0; i < 8; i++ {
 		if bo == BE {
-			b[i] = byte(u >> uint64((4-i-1)*8))
+			bb[i] = byte(u >> uint64((4-i-1)*8))
 		} else {
-			b[i] = byte(u >> uint64(i*8))
+			bb[i] = byte(u >> uint64(i*8))
 		}
 	}
-	return b
+	if b != nil {
+		copy(b, bb)
+	}
+	return bb
 }
 
 // 从 socket中 读取 n个字节, 以大/小端字节序 转 uintX
-func ReadByte(r io.Reader, n uint8) ([]byte, error) {
+func ReadByte(r io.Reader, n uint32) ([]byte, error) {
 	b := make([]byte, n)
 	_, err := io.ReadFull(r, b)
 	if err != nil {
-		log.Println(err)
+		if err != io.EOF {
+			log.Println(err)
+		}
 		return b, err
 	}
 	return b, nil
 }
 
-func ReadByteToUint16(r io.Reader, bo ByteOrder) (uint16, error) {
-	b, err := ReadByte(r, 2)
+func ReadString(r io.Reader, n uint32) (string, error) {
+	b := make([]byte, n)
+	_, err := io.ReadFull(r, b)
 	if err != nil {
-		log.Println(err)
+		if err != io.EOF {
+			log.Println(err)
+		}
+		return "", err
+	}
+	return string(b), nil
+}
+
+func ReadUint8(r io.Reader) (uint8, error) {
+	b, err := ReadByte(r, 1)
+	if err != nil {
+		if err != io.EOF {
+			log.Println(err)
+		}
+		return 0, err
+	}
+	return uint8(b[0]), nil
+}
+
+func ReadUint16(r io.Reader, n uint32, bo ByteOrder) (uint16, error) {
+	b, err := ReadByte(r, n)
+	if err != nil {
+		if err != io.EOF {
+			log.Println(err)
+		}
 		return 0, err
 	}
 	return ByteToUint16(b, bo), nil
 }
 
-func ReadByteToUint32(r io.Reader, bo ByteOrder) (uint32, error) {
-	b, err := ReadByte(r, 4)
+func ReadUint32(r io.Reader, n uint32, bo ByteOrder) (uint32, error) {
+	b, err := ReadByte(r, n)
 	if err != nil {
-		log.Println(err)
+		if err != io.EOF {
+			log.Println(err)
+		}
 		return 0, err
 	}
 	return ByteToUint32(b, bo), nil
 }
 
-func ReadByteToUint64(r io.Reader, bo ByteOrder) (uint64, error) {
-	b, err := ReadByte(r, 8)
+func ReadUint64(r io.Reader, n uint32, bo ByteOrder) (uint64, error) {
+	b, err := ReadByte(r, n)
 	if err != nil {
-		log.Println(err)
+		if err != io.EOF {
+			log.Println(err)
+		}
 		return 0, err
 	}
 	return ByteToUint64(b, bo), nil
 }
 
-// uint32 以大/小端字节序 写入到 socket中
+// uintX 以大/小端字节序 写入到 socket中
+func WriteByte(w io.Writer, b []byte) (int, error) {
+	n, err := w.Write(b)
+	if err != nil {
+		log.Println(err)
+		return n, err
+	}
+	return n, nil
+}
+
+func WriteString(w io.Writer, s string) (int, error) {
+	n, err := w.Write([]byte(s))
+	if err != nil {
+		log.Println(err)
+		return n, err
+	}
+	return n, nil
+}
+
+func WriteUint8(w io.Writer, u uint8) error {
+	_, err := WriteByte(w, []byte{u})
+	if err != nil {
+		log.Println(err)
+		return err
+	}
+	return nil
+}
+
+func WriteUint16(w io.Writer, bo ByteOrder, u, n uint16) error {
+	var b, bb []byte
+	b = Uint16ToByte(u, nil, bo)
+	if bo == BE {
+		bb = b[2-n:]
+	} else {
+		bb = b[:n]
+	}
+	_, err := WriteByte(w, bb)
+	if err != nil {
+		log.Println(err)
+		return err
+	}
+	return nil
+}
+
+func WriteUint32(w io.Writer, bo ByteOrder, u, n uint32) error {
+	var b, bb []byte
+	b = Uint32ToByte(u, nil, bo)
+	if bo == BE {
+		bb = b[4-n:]
+	} else {
+		bb = b[:n]
+	}
+	log.Println(bb)
+	_, err := WriteByte(w, bb)
+	if err != nil {
+		log.Println(err)
+		return err
+	}
+	return nil
+}
+
+func WriteUint64(w io.Writer, bo ByteOrder, u, n uint64) error {
+	var b, bb []byte
+	b = Uint64ToByte(u, nil, bo)
+	if bo == BE {
+		bb = b[8-n:]
+	} else {
+		bb = b[:n]
+	}
+	_, err := WriteByte(w, bb)
+	if err != nil {
+		log.Println(err)
+		return err
+	}
+	return nil
+}

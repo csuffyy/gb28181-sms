@@ -39,6 +39,10 @@ type Config struct {
 	LogSaveDay  int
 }
 
+type Sms struct {
+	Rts map[string]*RtmpTask
+}
+
 func InitConf(file string) {
 	s, err := utils.ReadAllFile(file)
 	if err != nil {
@@ -80,9 +84,9 @@ func InitLog(file string) {
 	}()
 }
 
-/************************************************************/
-/* 守护进程 且 注册为系统服务(开机启动)
-/************************************************************/
+/////////////////////////////////////////////////////////////////
+// 守护进程 且 注册为系统服务(开机启动)
+/////////////////////////////////////////////////////////////////
 type program struct{}
 
 func (p *program) run() {
@@ -90,16 +94,17 @@ func (p *program) run() {
 	InitLog(conf.LogFile)
 
 	go RtmpServer()
+	//go SipServer()
 
 	http.HandleFunc("/", HttpServer)
 
-	log.Println("start http listen", conf.HttpListen)
+	log.Println("start http listen on", conf.HttpListen)
 	go func() {
 		log.Fatal(http.ListenAndServe(conf.HttpListen, nil))
 	}()
 
 	if conf.HttpsUse {
-		log.Println("start https listen", conf.HttpsListen)
+		log.Println("start https listen on", conf.HttpsListen)
 		go func() {
 			log.Fatal(http.ListenAndServeTLS(conf.HttpsListen,
 				conf.HttpsCrt, conf.HttpsKey, nil))
