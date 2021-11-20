@@ -16,7 +16,7 @@ import (
 
 const (
 	AppName    = "sms"
-	AppVersion = "0.0.0"
+	AppVersion = "0.0.1"
 	AppConf    = "sms.json"
 )
 
@@ -24,6 +24,7 @@ var (
 	h, v, d, u bool
 	c          string
 	conf       Config
+	Publishers map[string]*Stream // Domain_App_PublishName
 )
 
 type Config struct {
@@ -37,10 +38,6 @@ type Config struct {
 	LogFileSize int
 	LogFileNum  int
 	LogSaveDay  int
-}
-
-type Sms struct {
-	Rts map[string]*RtmpTask
 }
 
 func InitConf(file string) {
@@ -70,6 +67,7 @@ func InitLog(file string) {
 	log.Println("==================================================")
 	log.Println("== ", AppName, " version:", AppVersion)
 	log.Println("== StartTime:", utils.GetYMDHMS())
+	log.Println("== ByteOrder:", GetByteOrder())
 	log.Println("==================================================")
 	log.Println(h, v, d, u, c)
 	log.Printf("%#v", conf)
@@ -92,6 +90,7 @@ type program struct{}
 func (p *program) run() {
 	InitConf(c)
 	InitLog(conf.LogFile)
+	Publishers = make(map[string]*Stream)
 
 	go RtmpServer()
 	//go SipServer()

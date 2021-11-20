@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"livego/protocol/amf"
 	"log"
 	"reflect"
 )
@@ -32,7 +33,7 @@ const (
 
 type AmfInfo struct {
 	CmdName        string
-	TransactionID  float64
+	TransactionId  float64
 	App            string `amf:"app" json:"app"`
 	FlashVer       string `amf:"flashVer" json:"flashVer"`
 	SwfUrl         string `amf:"swfUrl" json:"swfUrl"`
@@ -42,8 +43,14 @@ type AmfInfo struct {
 	VideoCodecs    int    `amf:"videoCodecs" json:"videoCodecs"`
 	VideoFunction  int    `amf:"videoFunction" json:"videoFunction"`
 	PageUrl        string `amf:"pageUrl" json:"pageUrl"`
-	ObjectEncoding int    `amf:"objectEncoding" json:"objectEncoding"`
+	ObjectEncoding int    // 0 is AMF0, 3 is AMF3
 	Type           string
+	PublishName    string
+	PublishType    string  // live/ record/ append
+	StreamName     string  // play cmd use
+	Start          float64 // play cmd use
+	Duration       float64 // play cmd use, live is -1
+	Reset          bool    // play cmd use
 }
 
 type Object map[string]interface{}
@@ -57,7 +64,7 @@ func AmfHandle(s *Stream, c *Chunk) error {
 		log.Println(err)
 		return err
 	}
-	log.Printf("Amf Marshal %#v", vs)
+	log.Printf("Amf Unmarshal %#v", vs)
 
 	switch vs[0].(string) {
 	case "connect":
@@ -72,40 +79,35 @@ func AmfHandle(s *Stream, c *Chunk) error {
 	case "FCPublish":
 		return nil
 	case "createStream":
-		/*
-			if err = s.AmfCreateStream(vs[1:]); err != nil {
-				return err
-			}
-			if err = s.AmfCreateStreamResp(c); err != nil {
-				return err
-			}
-		*/
+		if err = AmfCreateStreamHandle(s, vs); err != nil {
+			return err
+		}
+		if err = AmfCreateStreamResponse(s, c); err != nil {
+			return err
+		}
 	case "publish":
-		/*
-			if err = s.AmfPublishOrPlay(vs[1:]); err != nil {
-				return err
-			}
-			if err = s.AmfPublishResp(c); err != nil {
-				return err
-			}
-			s.HandleMessageDone = true
-			s.isPublisher = true
-		*/
+		if err = AmfPublishHandle(s, vs); err != nil {
+			return err
+		}
+		if err = AmfPublishResponse(s, c); err != nil {
+			return err
+		}
+		s.IsPublisher = true
+		s.MessageHandleDone = true
 	case "play":
-		/*
-			if err = s.AmfPublishOrPlay(vs[1:]); err != nil {
-				return err
-			}
-			if err = s.AmfPlayResp(msg); err != nil {
-				return err
-			}
-			s.HandleMessageDone = true
-			s.isPublisher = false
-		*/
-	case "FCUnpublish":
-	case "deleteStream":
+		if err = AmfPlayHandle(s, vs); err != nil {
+			return err
+		}
+		if err = AmfPlayResponse(s, c); err != nil {
+			return err
+		}
+		s.IsPublisher = false
+		s.MessageHandleDone = true
+	//case "FCUnpublish":
+	//case "deleteStream":
 	default:
 		err = fmt.Errorf("Untreated AmfCmd", vs[0].(string))
+		log.Println(err)
 		return err
 	}
 	return nil
@@ -215,7 +217,7 @@ func Amf0DecodeObject(r io.Reader) (Object, error) {
 		}
 		ret[key] = value
 	}
-	log.Printf("%#v", ret)
+	//log.Printf("%#v", ret)
 	return ret, nil
 }
 
@@ -241,7 +243,7 @@ func Amf0DecodeEcmaArray(r io.Reader) (Object, error) {
 		}
 		return nil, err
 	}
-	log.Printf("%#v", ret)
+	//log.Printf("%#v", ret)
 	return ret, nil
 }
 
@@ -406,7 +408,7 @@ func AmfConnectHandle(s *Stream, vs []interface{}) error {
 		case string:
 			s.AmfInfo.CmdName = v.(string)
 		case float64:
-			s.AmfInfo.TransactionID = v.(float64)
+			s.AmfInfo.TransactionId = v.(float64)
 		case Object:
 			o := v.(Object)
 			if i, ok := o["app"]; ok {
@@ -452,9 +454,10 @@ func AmfConnectResponse(s *Stream, c *Chunk) error {
 	d = Uint32ToByte(1024, nil, BE)
 	rc = CreateMessage(MsgTypeIdSetChunkSize, 4, d)
 	MessageSplit(s, &rc)
-	// 这里不能设置为1024, 因为下面发送要用到这个值，对方还是128
-	//s.ChunkSize = 1024
+	// 这里必须设置为1024, 因为上面已通知对方ChunkSize=1024
+	s.ChunkSize = 1024
 
+	log.Println("Send Command Message")
 	rsps := make(Object)
 	rsps["fmsVer"] = "FMS/3,0,1,123"
 	rsps["capabilities"] = 31
@@ -475,13 +478,104 @@ func AmfConnectResponse(s *Stream, c *Chunk) error {
 	return nil
 }
 
+func AmfCreateStreamHandle(s *Stream, vs []interface{}) error {
+	for _, v := range vs {
+		switch v.(type) {
+		case string:
+			s.AmfInfo.CmdName = v.(string)
+		case float64:
+			s.AmfInfo.TransactionId = v.(float64)
+		}
+	}
+	log.Printf("%#v", s.AmfInfo)
+	return nil
+}
+
+func AmfCreateStreamResponse(s *Stream, c *Chunk) error {
+	// 1 Command Message (_result- createStream response)
+	log.Println("Send Command Message")
+	d, _ := AmfMarshal("_result", s.AmfInfo.TransactionId, nil, c.MsgStreamId)
+	log.Println(d)
+
+	rc := CreateMessage(MsgTypeIdCmdAmf0, uint32(len(d)), d)
+	rc.Csid = c.Csid
+	rc.MsgStreamId = c.MsgStreamId
+	MessageSplit(s, &rc)
+	return nil
+}
+
+func AmfPublishHandle(s *Stream, vs []interface{}) error {
+	for k, v := range vs {
+		switch v.(type) {
+		case string:
+			if k == 0 {
+				s.AmfInfo.CmdName = v.(string)
+			} else if k == 3 {
+				s.AmfInfo.PublishName = v.(string)
+			} else if k == 4 {
+				s.AmfInfo.PublishType = v.(string)
+			}
+		case float64:
+			s.AmfInfo.TransactionId = v.(float64)
+		case amf.Object:
+			log.Println("Untreated AmfType")
+		}
+	}
+	log.Printf("%#v", s.AmfInfo)
+	return nil
+}
+
+func AmfPublishResponse(s *Stream, c *Chunk) error {
+	info := make(Object)
+	info["level"] = "status"
+	info["code"] = "NetStream.Publish.Start"
+	info["description"] = "Start publising."
+
+	d, _ := AmfMarshal("onStatus", 0, nil, info) // 结构化转序列化
+	log.Println(d)
+
+	rc := CreateMessage(MsgTypeIdCmdAmf0, uint32(len(d)), d)
+	rc.Csid = c.Csid
+	rc.MsgStreamId = c.MsgStreamId
+	MessageSplit(s, &rc)
+	return nil
+}
+
+func AmfPlayHandle(s *Stream, vs []interface{}) error {
+	for k, v := range vs {
+		switch v.(type) {
+		case string:
+			if k == 0 {
+				s.AmfInfo.CmdName = v.(string)
+			} else if k == 3 {
+				s.AmfInfo.StreamName = v.(string)
+			}
+		case float64:
+			if k == 1 {
+				s.AmfInfo.TransactionId = v.(float64)
+			} else if k == 4 {
+				s.AmfInfo.Start = v.(float64)
+			} else if k == 5 {
+				s.AmfInfo.Duration = v.(float64)
+			}
+		case amf.Object:
+			log.Println("Untreated AmfType")
+		case bool:
+			s.AmfInfo.Reset = v.(bool)
+		}
+	}
+	log.Printf("%#v", s.AmfInfo)
+	return nil
+}
+
+func AmfPlayResponse(s *Stream, c *Chunk) error {
+	return nil
+}
+
 ///////////////////////////////////////////////////////////
 
 /*
 type Statistics struct {
-}
-
-type HlsProducer struct {
 }
 
 type MediaInfo struct {
@@ -496,103 +590,6 @@ type MediaInfo struct {
 	compositionTime int32
 }
 
-type MStreams struct {
-	Streams map[string]interface{}
-	sync.RWMutex
-}
-
-func TestMStreams() {
-	s := &MStreams{Streams: make(map[string]interface{})}
-	log.Printf("%d, %#v\n", len(s.Streams), s.Streams)
-	s.Add("cctv1", "111")
-	log.Printf("%d, %#v\n", len(s.Streams), s.Streams)
-	s.Add("cctv2", 222)
-	log.Printf("%d, %#v\n", len(s.Streams), s.Streams)
-	s.Add("cctv2", 2222)
-	log.Printf("%d, %#v\n", len(s.Streams), s.Streams)
-	v, ok := s.Get("cctv2")
-	log.Printf("%v, %#v\n", ok, v)
-	s.Del("cctv2")
-	log.Printf("%d, %#v\n", len(s.Streams), s.Streams)
-}
-
-func (s *Stream) RtmpHandshakeclient() error {
-	log.Println("RtmpHandshakeclient()")
-	return nil
-}
-
-func Uint32ToByteLE(b []byte, v uint32, len int) {
-	for i := 0; i < len; i++ {
-		b[i] = byte(v >> uint32(i*8))
-	}
-}
-
-func WriteUint32ToByteBE(w io.Writer, v uint32, len int) error {
-	b := make([]byte, len)
-	Uint32ToByteBE(b, v, len)
-	if _, err := w.Write(b); err != nil {
-		log.Println(err)
-		return err
-	}
-	return nil
-}
-
-func WriteUint32ToByteLE(w io.Writer, v uint32, len int) error {
-	b := make([]byte, len)
-	Uint32ToByteLE(b, v, len)
-	if _, err := w.Write(b); err != nil {
-		log.Println(err)
-		return err
-	}
-	return nil
-}
-
-func ByteToUint32LE(b []byte) uint32 {
-	ret := uint32(0)
-	for i := 0; i < len(b); i++ {
-		ret += uint32(b[i]) << uint32(i*8)
-	}
-	return ret
-}
-
-func ReadByteToUint32LE(r io.Reader, n, tag int) uint32 {
-	b := make([]byte, n)
-	if _, err := io.ReadFull(r, b); err != nil {
-		log.Println(err)
-		return 0
-	}
-	return ByteToUint32LE(b)
-}
-
-func (s *Stream) RtmpTransmitStart() (err error) {
-	s.TransmitStart = true
-
-	var p Packet
-	for {
-		if !s.TransmitStart {
-			s.Conn.Close()
-			return
-		}
-
-		s.RtmpRecvData(&p)
-
-		// yyy
-		s.RtmpCacheGOP(&p)
-
-		//s.RtmpSendData()
-		for _, player := range s.Players {
-			log.Println(player)
-			if !player.Start {
-				s.RtmpSendGOP()
-				player.Start = true
-			} else {
-				// send new packet
-			}
-		}
-	}
-	return nil
-}
-
 const (
 	Sound_mp3     = 2
 	Sound_aac     = 10
@@ -605,81 +602,6 @@ const (
 	Frame_key     = 1
 	Frame_inter   = 2
 )
-
-func (s *Stream) SendAckMessage(len uint32) {
-	s.received += uint32(len)
-	s.ackReceived += uint32(len)
-	if s.received >= 0xf0000000 {
-		s.received = 0
-	}
-	if s.ackReceived >= s.remoteWindowAckSize {
-		c := CreateMessage(MsgTypeIdAck, 4, s.ackReceived)
-		c.ChunkDisAssmble(s.Conn, s.chunkSize)
-		s.ackReceived = 0
-	}
-}
-
-func (s *Stream) AmfPublishOrPlay(vs []interface{}) error {
-	for k, v := range vs {
-		switch v.(type) {
-		case string:
-			if k == 2 {
-				s.AmfInfo.PubName = v.(string)
-			} else if k == 3 {
-				s.AmfInfo.PubType = v.(string)
-			}
-		case float64:
-			s.AmfInfo.transactionID = int(v.(float64))
-		case amf.Object:
-		}
-	}
-	return nil
-}
-
-func (s *Stream) AmfPublishResp(msg *Chunk) error {
-	event := make(Object)
-	event["level"] = "status"
-	event["code"] = "NetStream.Publish.Start"
-	event["description"] = "Start publising."
-
-	amf, _ := AmfFormat("onStatus", 0, nil, event)
-	log.Println(amf)
-	c := CreateMessage0(msg.Csid, msg.StreamID,
-		MsgTypeIdCmdAmf0Code, uint32(len(amf)), amf)
-	c.ChunkDisAssmble(s.Conn, s.chunkSize)
-	return nil
-}
-
-func (s *Stream) AmfCreateStream(vs []interface{}) error {
-	for _, v := range vs {
-		switch v.(type) {
-		case float64:
-			s.AmfInfo.transactionID = int(v.(float64))
-		}
-	}
-	return nil
-}
-
-func (s *Stream) AmfCreateStreamResp(msg *Chunk) error {
-	amf, _ := AmfFormat("_result", s.AmfInfo.transactionID, nil, msg.StreamID)
-	log.Println(amf)
-	c := CreateMessage0(msg.Csid, msg.StreamID,
-		MsgTypeIdCmdAmf0Code, uint32(len(amf)), amf)
-	c.ChunkDisAssmble(s.Conn, s.chunkSize)
-	return nil
-}
-
-
-
-
-func TestSize() {
-	var f32 float32
-	var f64 float64
-	var b bool
-	log.Println("float32 size", unsafe.Sizeof(f32))
-	log.Println("float64 size", unsafe.Sizeof(f64))
-	log.Println("bool size", unsafe.Sizeof(b))
-}
 
 func RouteDefaultIface() string {
 	cmd := exec.Command("/bin/sh", "-c", `route | grep default | awk '{print $8}'`)
@@ -713,108 +635,6 @@ func IfaceIP(name string) string {
 	return ip
 }
 
-func init() {
-	log.SetFlags(log.Lshortfile | log.LstdFlags)
-	live = Live{Config{"1935", "6666", "7777", "8888"},
-		MStreams{Streams: make(map[string]interface{})}}
-	log.Println(live)
-}
-
-// xxx
-func (c *Chunk) ChunkAssmble(r io.Reader, chunkSize uint32) error {
-	// fmt: 控制Message Header的类型, 0表示11字节, 1表示7字节, 2表示3字节, 3表示0字节
-	switch c.Fmt {
-	case 0:
-		c.Timestamp, _ = ReadByteToUint32BE(r, 3)
-		c.Length, _ = ReadByteToUint32BE(r, 3)
-		c.TypeID, _ = ReadByteToUint32BE(r, 1)
-		c.StreamID = ReadByteToUint32LE(r, 4, 1) // xxx
-		if c.Timestamp == 0xffffff {
-			c.Timestamp, _ = ReadByteToUint32BE(r, 4)
-			c.TimeExted = true
-		} else {
-			c.TimeExted = false
-		}
-
-		c.Data = make([]byte, c.Length)
-		c.Index = 0
-		c.Remain = c.Length
-		c.Full = false
-	case 1:
-		c.TimeDelta, _ = ReadByteToUint32BE(r, 3)
-		c.Length, _ = ReadByteToUint32BE(r, 3)
-		c.TypeID, _ = ReadByteToUint32BE(r, 1)
-		if c.TimeDelta == 0xffffff {
-			c.TimeDelta, _ = ReadByteToUint32BE(r, 4)
-			c.TimeExted = true
-		} else {
-			c.TimeExted = false
-		}
-		c.Timestamp += c.TimeDelta
-
-		c.Data = make([]byte, c.Length)
-		c.Index = 0
-		c.Remain = c.Length
-		c.Full = false
-	case 2:
-		c.TimeDelta, _ = ReadByteToUint32BE(r, 3)
-		if c.TimeDelta == 0xffffff {
-			c.TimeDelta, _ = ReadByteToUint32BE(r, 4)
-			c.TimeExted = true
-		} else {
-			c.TimeExted = false
-		}
-		c.Timestamp += c.TimeDelta
-
-		c.Data = make([]byte, c.Length)
-		c.Index = 0
-		c.Remain = c.Length
-		c.Full = false
-	case 3:
-	default:
-		return fmt.Errorf("Invalid fmt=%d", c.Fmt)
-	}
-
-	size := uint32(c.Remain)
-	if size > chunkSize {
-		size = chunkSize
-	}
-
-	buf := c.Data[c.Index : c.Index+size]
-	if _, err := r.Read(buf); err != nil {
-		log.Println(err)
-		return err
-	}
-	c.Index += size
-	c.Remain -= size
-	if c.Remain == 0 {
-		c.Full = true
-		log.Println("Message TypeID:", c.TypeID)
-		log.Printf("%#v\n", c)
-	}
-
-	return nil
-}
-
-func (s *MStreams) Add(key string, value interface{}) {
-	s.Lock()
-	s.Streams[key] = value
-	s.Unlock()
-}
-
-func (s *MStreams) Del(key string) {
-	s.Lock()
-	delete(s.Streams, key)
-	s.Unlock()
-}
-
-func (s *MStreams) Get(key string) (interface{}, bool) {
-	s.RLock()
-	val, ok := s.Streams[key]
-	s.RUnlock()
-	return val, ok
-}
-
 func (s *Stream) RtmpCacheGOP(p *Packet) {
 	if p.IsMetadata {
 		s.Cache.MetaFull = true
@@ -835,321 +655,5 @@ func (s *Stream) RtmpCacheGOP(p *Packet) {
 
 func (s *Stream) RtmpSendGOP() (err error) {
 	return
-}
-
-func (s *Stream) RtmpRecvData(p *Packet) (err error) {
-	msg := Chunk{}
-	for {
-		if err = s.HandleChunk(&msg); err != nil {
-			log.Println(err)
-			return err
-		}
-		log.Println("xxx", msg.TypeID)
-
-		if msg.TypeID == MsgTypeIdAudioData ||
-			msg.TypeID == MsgTypeIdVideoData ||
-			msg.TypeID == MsgTypeIdCmdAmf3Data ||
-			msg.TypeID == MsgTypeIdCmdAmf0Data {
-			break
-		}
-	}
-
-	p.IsAudio = msg.TypeID == MsgTypeIdAudioData
-	p.IsVideo = msg.TypeID == MsgTypeIdVideoData
-	p.IsMetadata = msg.TypeID == MsgTypeIdCmdAmf3Data ||
-		msg.TypeID == MsgTypeIdCmdAmf0Data
-	p.StreamID = msg.StreamID
-	p.Timestamp = msg.Timestamp
-	p.Data = msg.Data
-	log.Printf("%#v", p)
-
-	if p.IsMetadata {
-		vs, err := AmfMarshal(bytes.NewReader(msg.Data))
-		if err != nil && err != io.EOF {
-			log.Println(err)
-		} else {
-			log.Printf("client rtmp command message %#v\n", vs)
-		}
-	}
-	if p.IsAudio {
-		s.ParseAudioTagHeader(p)
-	}
-	if p.IsVideo {
-		s.ParseVideoTagHeader(p)
-	}
-	return nil
-}
-
-func (s *Stream) ParseVideoTagHeader(p *Packet) (n int, err error) {
-	tag := p.Data[0]
-	s.MediaInfo.frameType = tag >> 4
-	s.MediaInfo.codecID = tag & 0xf
-	n++
-	if s.MediaInfo.frameType == Frame_key || s.MediaInfo.frameType == Frame_inter {
-		s.MediaInfo.avcPacketType = p.Data[1]
-		for i := 2; i < 5; i++ {
-			s.MediaInfo.compositionTime =
-				s.MediaInfo.compositionTime<<8 + int32(p.Data[i])
-		}
-		n += 4
-	}
-	log.Printf("%#v\n", s.MediaInfo)
-	return
-}
-
-func (s *Stream) ParseAudioTagHeader(p *Packet) (n int, err error) {
-	tag := p.Data[0]
-	s.MediaInfo.soundFormat = tag >> 4
-	s.MediaInfo.soundRate = (tag >> 2) & 0x3
-	s.MediaInfo.soundSize = (tag >> 1) & 0x1
-	s.MediaInfo.soundType = tag & 0x1
-	n++
-	if s.MediaInfo.soundFormat == Sound_aac {
-		s.MediaInfo.aacPacketType = p.Data[1]
-	}
-	log.Printf("%#v\n", s.MediaInfo)
-	return
-}
-
-func (s *Stream) HandleCommandMessage(msg *Chunk) error {
-	r := bytes.NewReader(msg.Data)
-	vs, err := AmfMarshal(r)
-	if err != nil && err != io.EOF {
-		log.Println(err)
-		return err
-	}
-	log.Printf("client rtmp command message %#v\n", vs)
-	switch vs[0].(string) {
-	case amfConnect:
-		if err = s.AmfConnect(vs[1:]); err != nil {
-			return err
-		}
-		if err = s.AmfConnectResp(msg); err != nil {
-			return err
-		}
-	case amfReleaseStream:
-		return nil
-	case amfFcpublish:
-		return nil
-	case amfCreateStream:
-		if err = s.AmfCreateStream(vs[1:]); err != nil {
-			return err
-		}
-		if err = s.AmfCreateStreamResp(msg); err != nil {
-			return err
-		}
-	case amfPublish:
-		if err = s.AmfPublishOrPlay(vs[1:]); err != nil {
-			return err
-		}
-		if err = s.AmfPublishResp(msg); err != nil {
-			return err
-		}
-		s.HandleMessageDone = true
-		s.isPublisher = true
-	case amfPlay:
-			if err = s.AmfPublishOrPlay(vs[1:]); err != nil {
-				return err
-			}
-			if err = s.AmfPlayResp(msg); err != nil {
-				return err
-			}
-			s.HandleMessageDone = true
-			s.isPublisher = false
-	default:
-		err = fmt.Errorf("Invalid amf command", vs[0].(string))
-		return err
-	}
-	return nil
-}
-
-func (s *Stream) AmfPublishOrPlay(vs []interface{}) error {
-	for k, v := range vs {
-		switch v.(type) {
-		case string:
-			if k == 2 {
-				s.AmfInfo.PubName = v.(string)
-			} else if k == 3 {
-				s.AmfInfo.PubType = v.(string)
-			}
-		case float64:
-			s.AmfInfo.transactionID = int(v.(float64))
-		case amf.Object:
-		}
-	}
-	return nil
-}
-
-func (s *Stream) AmfPublishResp(msg *Chunk) error {
-	event := make(Object)
-	event["level"] = "status"
-	event["code"] = "NetStream.Publish.Start"
-	event["description"] = "Start publising."
-
-	amf, _ := AmfFormat("onStatus", 0, nil, event)
-	log.Println(amf)
-	c := CreateMessage0(msg.Csid, msg.StreamID,
-		MsgTypeIdCmdAmf0Code, uint32(len(amf)), amf)
-	c.ChunkDisAssmble(s.Conn, s.chunkSize)
-	return nil
-}
-
-func (s *Stream) AmfCreateStream(vs []interface{}) error {
-	for _, v := range vs {
-		switch v.(type) {
-		case float64:
-			s.AmfInfo.transactionID = int(v.(float64))
-		}
-	}
-	return nil
-}
-
-func (s *Stream) AmfCreateStreamResp(msg *Chunk) error {
-	amf, _ := AmfFormat("_result", s.AmfInfo.transactionID, nil, msg.StreamID)
-	log.Println(amf)
-	c := CreateMessage0(msg.Csid, msg.StreamID,
-		MsgTypeIdCmdAmf0Code, uint32(len(amf)), amf)
-	c.ChunkDisAssmble(s.Conn, s.chunkSize)
-	return nil
-}
-
-func (s *Stream) AmfConnectResp(msg *Chunk) error {
-	c := CreateMessage(MsgTypeIdWindowAckSize, 4, 2500000)
-	c.ChunkDisAssmble(s.Conn, s.chunkSize)
-	c = CreateMessage(MsgTypeIdSetPeerBandwidth, 5, 2500000)
-	c.Data[4] = 2 // ???
-	c.ChunkDisAssmble(s.Conn, s.chunkSize)
-	c = CreateMessage(MsgTypeIdSetChunkSize, 4, uint32(1024))
-	s.chunkSize = ByteToUint32BE(c.Data)
-	c.ChunkDisAssmble(s.Conn, s.chunkSize)
-
-	resp := make(Object)
-	resp["fmsVer"] = "FMS/3,0,1,123"
-	resp["capabilities"] = 31
-
-	event := make(Object)
-	event["level"] = "status"
-	event["code"] = "NetConnection.Connect.Success"
-	event["description"] = "Connection succeeded."
-	event["objectEncoding"] = s.AmfInfo.ObjectEncoding
-	log.Println(resp, event)
-	amf, _ := AmfFormat("_result", s.AmfInfo.transactionID, resp, event)
-	log.Println(amf)
-	c = CreateMessage0(msg.Csid, msg.StreamID,
-		MsgTypeIdCmdAmf0Code, uint32(len(amf)), amf)
-	c.ChunkDisAssmble(s.Conn, s.chunkSize)
-	return nil
-}
-
-func main() {
-	//TestSize()
-	//TestMStreams()
-	go RtmpServer(fmt.Sprintf("%s:%s", IfaceIP("eth1"), "1935"))
-	http.HandleFunc("/", HttpServer)
-	http.ListenAndServe(":8080", nil)
-}
-
-func ReadChunk() {
-	n, err := c.Read(buf)
-	log.Println(n, err)
-	h := buf[0]
-	fmt := h >> 6
-	csid := h & 0x3f
-	log.Println(fmt, csid)
-	var cs ChunkStream
-	for {
-		if err := c.Read(&cs); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func rtmphandchunk(c net.Conn) error {
-	var c ChunkStream
-	done := false
-	for {
-		if err := ReadChunk(); err != nil {
-			return err
-		}
-		switch c.TypeID {
-		case 17, 20:
-			if err := handleCmdMsg(); err != nil {
-				return err
-			}
-		}
-		if down {
-			break
-		}
-	}
-	return nil
-}
-
-func hsCreate2(p []byte, key []byte) {
-	rand.Read(p)
-	gap := len(p) - 32
-	digest := hsMakeDigest(key, p, gap)
-	log.Println("S2中的digest: ", digest)
-	copy(p[gap:], digest)
-}
-
-func PutU32BE(b []byte, v uint32) {
-	b[0] = byte(v >> 24)
-	b[1] = byte(v >> 16)
-	b[2] = byte(v >> 8)
-	b[3] = byte(v)
-}
-
-func hsCreate01(p []byte, time uint32, ver uint32, key []byte) {
-	p1 := p[1:]
-	rand.Read(p1[8:])
-	PutU32BE(p1[0:4], time)
-	PutU32BE(p1[4:8], ver)
-	gap := hsCalcDigestPos(p1, 8)
-	digest := hsMakeDigest(key, p1, gap)
-	log.Println("S1中的digest: ", digest)
-	copy(p1[gap:], digest)
-}
-
-func hsParse1(p []byte, fpkeyp []byte, fmskey []byte) (ok bool, digest []byte) {
-	var pos int
-	if pos = hsFindDigestPos(p, fpkeyp, 772); pos == -1 {
-		if pos = hsFindDigestPos(p, fpkeyp, 8); pos == -1 {
-			return
-		}
-	}
-	ok = true
-	digest = hsMakeDigest(fmskey, p[pos:pos+32], -1)
-	return
-}
-
-func hsFindDigestPos(p []byte, fpkeyp []byte, base int) int {
-	pos := hsCalcDigestPos(p, base)
-	digest := hsMakeDigest(fpkeyp, p, pos)
-	log.Println("C1中的digest: ", p[pos:pos+32])
-	log.Println("C1中计算出的digest: ", digest)
-	if bytes.Compare(p[pos:pos+32], digest) != 0 {
-		return -1
-	}
-	return pos
-}
-
-func hsCalcDigestPos(p []byte, base int) (pos int) {
-	for i := 0; i < 4; i++ {
-		pos += int(p[base+i]) // ???
-	}
-	pos = (pos % 728) + base + 4 // ???
-	return
-}
-
-func hsMakeDigest(key []byte, src []byte, pos int) (dst []byte) {
-	h := hmac.New(sha256.New, key)
-	if pos <= 0 {
-		h.Write(src)
-	} else {
-		h.Write(src[:pos])
-		h.Write(src[pos+32:])
-	}
-	return h.Sum(nil)
 }
 */

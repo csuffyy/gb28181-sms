@@ -3,6 +3,7 @@ package main
 import (
 	"io"
 	"log"
+	"unsafe"
 )
 
 // 以小端方式写，以小端方式读
@@ -20,6 +21,25 @@ const (
 	BE ByteOrder = "BigEndian"
 	LE ByteOrder = "LittleEndian"
 )
+
+func TestSize() {
+	var f32 float32
+	var f64 float64
+	var b bool
+	log.Println("float32 size:", unsafe.Sizeof(f32))
+	log.Println("float64 size:", unsafe.Sizeof(f64))
+	log.Println("bool size:", unsafe.Sizeof(b))
+}
+
+func GetByteOrder() string {
+	u16 := uint16(0x1122) // 0x11为高位, 0x22为低位
+	u8 := uint8(u16)      // u8[0]为低地址, u8[1]为高地址
+	//log.Println(unsafe.Sizeof(u16), unsafe.Sizeof(u8))
+	if u8 == 0x22 { // 低位在低地址, 为小端
+		return "LittleEndian"
+	}
+	return "BigEndian"
+}
 
 // []byte 以大/小端字节序 转 uintX
 func ByteToUint16(b []byte, bo ByteOrder) uint16 {
@@ -237,7 +257,7 @@ func WriteUint32(w io.Writer, bo ByteOrder, u, n uint32) error {
 	} else {
 		bb = b[:n]
 	}
-	log.Println(bb)
+	log.Println(len(bb), bb)
 	_, err := WriteByte(w, bb)
 	if err != nil {
 		log.Println(err)
