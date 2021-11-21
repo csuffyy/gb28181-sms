@@ -10,6 +10,8 @@ import (
 	"io"
 	"log"
 	"net"
+	"os"
+	"utils"
 )
 
 const (
@@ -53,14 +55,22 @@ var (
 	}
 	FPKeyP  = FPKey[:30]
 	FMSKeyP = FMSKey[:36]
-
-	//RtmpPlayerKey = []byte{
-	//RtmpServerKey = []byte{
-	//RtmpPlayerPartKey = RtmpPlayerKey[:30]
-	//RtmpServerPartKey = RtmpServerKey[:36]
 )
 
+// 新来的rtmp连接 无法确定角色，确定后 日志文件 需重命名
+// StreamTimestamp.log(时间戳到毫秒) 重命名为 Publisher_live_cctv1.log
+// StreamTimestamp.log(时间戳到毫秒) 重命名为 Player_live_cctv1_ip_port.log
+// /usr/local/sms/sms			执行程序
+// /usr/local/sms/sms.json		配置文件
+// /usr/local/sms/sms.log		程序日志文件
+// /usr/local/sms/log/StreamTimestamp.log.log	角色未确定时的日志
+// /usr/local/sms/log/live_cctv1/Publisher_live_cctv1.log		发布者日志
+// /usr/local/sms/log/live_cctv1/Player_live_cctv1_ip_port.log	播放者日志
+// /usr/local/sms/hls/live_cctv1/cctv1.m3u8
+// /usr/local/sms/hls/live_cctv1/cctv1_001.ts
 type Stream struct {
+	LogFilename         string      // StreamTimestamp.log
+	log                 *log.Logger // 每个发布者、播放者的日志都是独立的
 	Conn                net.Conn
 	ChunkSize           uint32
 	WindowAckSize       uint32
@@ -74,6 +84,7 @@ type Stream struct {
 	TransmitSwitch      string
 	Players             map[string]*Stream // key use player's ip_port
 	NewPlayer           bool               // player use, 新来的播放者要先发GopCache
+	DataChan            chan *Chunk        // 发布者和播放者的数据通道, 有缓存的
 	GopCache
 }
 
@@ -138,20 +149,20 @@ func RtmpHandler(c net.Conn) {
 	s := NewStream(c)
 
 	if err := RtmpHandshakeServer(s); err != nil {
-		log.Println(err)
+		s.log.Println(err)
 		return
 	}
-	log.Println("RtmpHandshakeServer ok")
+	s.log.Println("RtmpHandshakeServer ok")
 
 	if err := RtmpHandleMessage(s); err != nil {
-		log.Println(err)
+		s.log.Println(err)
 		return
 	}
-	log.Println("RtmpHandleMessage ok")
+	s.log.Println("RtmpHandleMessage ok")
 
 	//log.Printf("%#v", s)
-	log.Printf("the stream have %d chunks", len(s.Chunks))
-	log.Printf("the stream is publisher %t", s.IsPublisher)
+	s.log.Printf("the stream have %d chunks", len(s.Chunks))
+	s.log.Printf("the stream is publisher %t", s.IsPublisher)
 	if s.IsPublisher {
 		// for循环负责接收数据，发送如何处理 ???
 		// 方法1: 发送也在 for循环里做，这样可能会影响接收
@@ -163,8 +174,45 @@ func RtmpHandler(c net.Conn) {
 	}
 }
 
+func GetTempLogFilename() string {
+	ts := utils.GetTimestamp("ms")
+	s := fmt.Sprintf("Stream_%d.log", ts)
+	log.Println(s)
+	return s
+}
+
+func StreamLogCreate(fn string) (*log.Logger, error) {
+	f, err := os.Create(fn)
+	if err != nil {
+		log.Println(err)
+		return nil, err
+	}
+
+	l := log.New(f, "", log.LstdFlags|log.Lshortfile)
+	return l, nil
+}
+
+func StreamLogRename(s *Stream) {
+	/*
+		// 文件打开状态下 也可以重命名
+		//func Mkdir(name string, perm FileMode) error {
+		err = os.MkdirAll("live/test", 0755)
+		if err != nil {
+			log.Println(err)
+			return
+		}
+
+		err = os.Rename("aaa.log", "live/test/bbb.log")
+		if err != nil {
+			log.Println(err)
+			return
+		}
+	*/
+}
+
 func NewStream(c net.Conn) *Stream {
 	s := &Stream{
+		LogFilename:         GetTempLogFilename(),
 		Conn:                c,
 		ChunkSize:           128,
 		WindowAckSize:       2500000,
@@ -172,8 +220,11 @@ func NewStream(c net.Conn) *Stream {
 		RemoteWindowAckSize: 2500000,
 		Chunks:              make(map[uint32]Chunk),
 		Players:             make(map[string]*Stream),
+		NewPlayer:           true,
+		DataChan:            make(chan *Chunk, 5),
 		GopCache:            GopCacheNew(),
 	}
+	s.log, _ = StreamLogCreate(s.LogFilename)
 	return s
 }
 
@@ -192,21 +243,22 @@ func RtmpPublisher(s *Stream) {
 	}
 	Publishers[key] = s
 
-	//go RtmpSender(s) // 给所有播放者发送数据
+	go RtmpSender(s) // 给所有播放者发送数据
 
 	s.TransmitSwitch = "on"
 	i := 0
 	for {
 		log.Println("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx>>>", i)
 		if s.TransmitSwitch == "off" {
-			log.Printf("publisher %s off", key)
+			log.Printf("publisher %s close", key)
 			s.Conn.Close()
 			return
 		}
 
-		// 接收数据
+		// 接收数据 和 传递数据给发送者
 		if err := RtmpReceiver(s); err != nil {
 			log.Println(err)
+			log.Println("The connect closed by peer")
 			s.Conn.Close()
 			return
 		}
@@ -220,12 +272,12 @@ func RtmpPublisher(s *Stream) {
 		// 6 AudioAacFrame 367
 		// 7 VideoInterFrame 714
 		// 8 AudioAacFrame 366
+		// 测试使用, 控制接收 多少个Message
 		if i == 203 {
 			//s.Conn.Close()
 			//break
 		}
 		i++
-		//s.DataChan <- p
 	}
 }
 
@@ -246,6 +298,10 @@ func RtmpReceiver(s *Stream) error {
 		SendAckMessage(s, c.MsgLength)
 
 		log.Printf("Message TypeId %d, len %d", c.MsgTypeId, c.MsgLength)
+		if c.MsgTypeId == MsgTypeIdCmdAmf0 { // 20
+			AmfHandle(s, &c)
+		}
+
 		if c.MsgTypeId == MsgTypeIdAudio || // 8
 			c.MsgTypeId == MsgTypeIdVideo || // 9
 			c.MsgTypeId == MsgTypeIdDataAmf3 || // 15
@@ -267,6 +323,7 @@ func RtmpReceiver(s *Stream) error {
 		c.MsgTypeId == MsgTypeIdDataAmf0 { // 18
 		MetadataHandle(s, &c)
 	}
+	s.DataChan <- &c
 
 	log.Println(s.GopCacheMax, s.GopCacheNum, s.MediaData.Len())
 	PrintList(s.MediaData)
@@ -277,7 +334,7 @@ func PrintList(l *list.List) {
 	i := 0
 	for e := l.Front(); e != nil; e = e.Next() {
 		v := (e.Value).(*Chunk)
-		log.Println(i, v.DataType, v.MsgLength)
+		log.Println(i, v.DataType, v.MsgLength, v.Timestamp)
 		i++
 	}
 }
@@ -290,7 +347,9 @@ func PrintList(l *list.List) {
 //4 = Nellymoser 16-kHz mono
 //5 = Nellymoser 8-kHz mono
 //6 = Nellymoser
-//7 = G.711 A-law logarithmic PCM 8 = G.711 mu-law logarithmic PCM 9 = reserved
+//7 = G.711 A-law logarithmic PCM
+//8 = G.711 mu-law logarithmic PCM
+//9 = reserved
 //10 = AAC
 //11 = Speex
 //14 = MP3 8-Khz
@@ -371,29 +430,45 @@ func GopCacheUpdate(s *Stream) {
 	// 1 先判断CacheData里的关键帧个数 是否达到GopCacheMax+1, 如果没有就直接存入并退出
 	// 2 如果达到, 就先删除CacheData里最早的Gop(含音频帧), 然后再存入
 	gc := s.GopCache
+	log.Printf("GopCacheNum=%d, GopCacheMax=%d", gc.GopCacheNum, gc.GopCacheMax)
 	if gc.GopCacheNum < gc.GopCacheMax+1 {
 		return
 	}
 
 	KeyFrameNum := 0
-	for e := gc.MediaData.Front(); e != nil; e = e.Next() {
+	var n *list.Element
+	for e := gc.MediaData.Front(); e != nil; e = n {
 		v := (e.Value).(*Chunk)
+		log.Printf("list loop: %s, %d", v.DataType, v.MsgLength)
 		if v.DataType == "VideoKeyFrame" {
 			KeyFrameNum++
 		}
 		if KeyFrameNum == 2 {
 			break
 		}
+		log.Printf("list remove: %s, %d", v.DataType, v.MsgLength)
+		n = e.Next()
 		gc.MediaData.Remove(e)
 	}
 	s.GopCache.GopCacheNum--
 }
 
-func GopCacheSend() {
+func GopCacheSend(s *Stream, gop *GopCache) {
 	// 1 发送Metadata
+	MessageSplit(s, gop.MetaData)
 	// 2 发送VideoHeader
+	MessageSplit(s, gop.VideoHeader)
 	// 3 发送AudioHeader
+	MessageSplit(s, gop.AudioHeader)
 	// 4 发送MediaData(包含最后收到的数据)
+	log.Println("GopCache.MediaData len ", gop.MediaData.Len())
+	i := 0
+	for e := gop.MediaData.Front(); e != nil; e = e.Next() {
+		v := (e.Value).(*Chunk)
+		MessageSplit(s, v)
+		log.Println("GopCacheSend", i, v.DataType, v.MsgLength, v.Timestamp)
+		i++
+	}
 }
 
 func VideoHandle(s *Stream, c *Chunk) error {
@@ -529,15 +604,26 @@ func MetadataHandle(s *Stream, c *Chunk) error {
 // 1 快速启播：先发送缓存的gop数据, 再发送最新数据. 启播快 但延时交高
 // 2 低延时启播：直接发送最新数据. 启播交慢 但是延时最低
 func RtmpSender(s *Stream) {
-	log.Println(len(s.Players))
-	for _, p := range s.Players {
-		// 新播放者，先发送缓存的gop数据，再发送最新数据
-		if p.NewPlayer == true {
-			p.NewPlayer = false
-			//RtmpSendGOP()
+	for {
+		c, ok := <-s.DataChan
+		if !ok {
+			log.Println("RtmpSender close")
+			// TODO: 释放所有播放者和其他资源
+			return
 		}
-		// 老播放者，直接发送最新数据
-		// send new packet
+
+		log.Println(len(s.Players))
+		for _, p := range s.Players {
+			// 新播放者，先发送缓存的gop数据，再发送最新数据
+			// 老播放者，直接发送最新数据
+			log.Println(p.NewPlayer)
+			if p.NewPlayer == true {
+				p.NewPlayer = false
+				GopCacheSend(p, &s.GopCache)
+			} else {
+				MessageSplit(p, c)
+			}
+		}
 	}
 }
 
@@ -774,8 +860,14 @@ func SendAckMessage(s *Stream, MsgLen uint32) {
 /////////////////////////////////////////////////////////////////
 func MessageMerge(s *Stream, c *Chunk) (Chunk, error) {
 	var bh, fmt, csid uint32 // basic header
+	var err error
+	var sc Chunk
 	for {
-		bh, _ = ReadUint32(s.Conn, 1, BE)
+		bh, err = ReadUint32(s.Conn, 1, BE)
+		if err != nil {
+			log.Println(err)
+			return sc, err
+		}
 		fmt = bh >> 6
 		csid = bh & 0x3f // [0, 63]
 
@@ -816,16 +908,19 @@ func MessageMerge(s *Stream, c *Chunk) (Chunk, error) {
 	}
 }
 
+// fmt: 控制Message Header的类型, 0表示11字节, 1表示7字节, 2表示3字节, 3表示0字节
+// 音频的fmt顺序 一般是0 2 3 3 3 3 3 3 3 3 3 //理想状态 数据量和时间增量相同
+// 音频的fmt顺序 一般是0 1 1 1 2 1 1 1 1 2 1 //实际情况 数据量偶尔同 时间增量都不同
+// 视频的fmt顺序 一般是0 3 3 3 1 1 3 3 1 3 3
+// 块大小默认是128, 通常会设置为1024, 音频消息约400字节, 视频消息约700-30000字节
 func ChunkAssemble(s *Stream, c *Chunk) error {
-	// fmt: 控制Message Header的类型, 0表示11字节, 1表示7字节, 2表示3字节, 3表示0字节
-	// 音频的fmt 顺序 一般是 0 2 3 3 3 3 3 3 3 3 3
-	// 视频的fmt 顺序 一般是 0 3 3 3 1 3 3 3 1 3 3
 	switch c.Fmt {
 	case 0:
 		c.Timestamp, _ = ReadUint32(s.Conn, 3, BE)
 		c.MsgLength, _ = ReadUint32(s.Conn, 3, BE)
 		c.MsgTypeId, _ = ReadUint32(s.Conn, 1, BE)
 		c.MsgStreamId, _ = ReadUint32(s.Conn, 4, LE)
+		log.Println(c.MsgLength, c.MsgTypeId, c.MsgStreamId)
 		if c.Timestamp == 0xffffff {
 			c.Timestamp, _ = ReadUint32(s.Conn, 4, BE)
 			c.TimeExted = true
@@ -841,6 +936,7 @@ func ChunkAssemble(s *Stream, c *Chunk) error {
 		c.TimeDelta, _ = ReadUint32(s.Conn, 3, BE)
 		c.MsgLength, _ = ReadUint32(s.Conn, 3, BE)
 		c.MsgTypeId, _ = ReadUint32(s.Conn, 1, BE)
+		log.Println(c.MsgLength, c.MsgTypeId)
 		if c.TimeDelta == 0xffffff {
 			c.Timestamp, _ = ReadUint32(s.Conn, 4, BE)
 			c.TimeExted = true
@@ -862,7 +958,23 @@ func ChunkAssemble(s *Stream, c *Chunk) error {
 			c.TimeExted = false
 		}
 		c.Timestamp += c.TimeDelta
+
+		c.MsgIndex = 0
+		c.MsgRemain = c.MsgLength
+		c.Full = false
 	case 3:
+		// TODO: 有可能有4字节的扩展时间戳
+		if c.TimeExted == true {
+			//c.Timestamp, _ = ReadUint32(s.Conn, 4, BE)
+		}
+
+		if c.MsgRemain == 0 {
+			c.Timestamp += c.TimeDelta
+
+			c.MsgIndex = 0
+			c.MsgRemain = c.MsgLength
+			c.Full = false
+		}
 	default:
 		return fmt.Errorf("Invalid fmt=%d", c.Fmt)
 	}

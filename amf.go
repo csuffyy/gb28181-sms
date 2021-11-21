@@ -105,8 +105,10 @@ func AmfHandle(s *Stream, c *Chunk) error {
 		s.MessageHandleDone = true
 	//case "FCUnpublish":
 	//case "deleteStream":
+	case "getStreamLength": // play 交互出现
+		return nil
 	default:
-		err = fmt.Errorf("Untreated AmfCmd", vs[0].(string))
+		err = fmt.Errorf("Untreated AmfCmd %s", vs[0].(string))
 		log.Println(err)
 		return err
 	}
@@ -571,89 +573,3 @@ func AmfPlayHandle(s *Stream, vs []interface{}) error {
 func AmfPlayResponse(s *Stream, c *Chunk) error {
 	return nil
 }
-
-///////////////////////////////////////////////////////////
-
-/*
-type Statistics struct {
-}
-
-type MediaInfo struct {
-	soundFormat     uint8
-	soundRate       uint8
-	soundSize       uint8
-	soundType       uint8
-	aacPacketType   uint8
-	frameType       uint8
-	codecID         uint8
-	avcPacketType   uint8
-	compositionTime int32
-}
-
-const (
-	Sound_mp3     = 2
-	Sound_aac     = 10
-	Sound_5500hz  = 0
-	Sound_11000hz = 1
-	Sound_22000hz = 2
-	Sound_44000hz = 3
-	Sound_8bit    = 0
-	Sound_16bit   = 1
-	Frame_key     = 1
-	Frame_inter   = 2
-)
-
-func RouteDefaultIface() string {
-	cmd := exec.Command("/bin/sh", "-c", `route | grep default | awk '{print $8}'`)
-	b, err := cmd.CombinedOutput()
-	if err != nil {
-		log.Println(err)
-		return ""
-
-	}
-	return string(b[:len(b)-1])
-
-}
-
-func IfaceIP(name string) string {
-	var ip string
-	iface, err := net.InterfaceByName(name)
-	if err != nil {
-		log.Println(err)
-		return ""
-
-	}
-	addrs, _ := iface.Addrs()
-	for _, addr := range addrs {
-		ipnet, _ := addr.(*net.IPNet)
-		if ipnet.IP.To4() != nil {
-			//log.Println(ipnet.IP.String())
-			ip = ipnet.IP.String()
-			break
-		}
-	}
-	return ip
-}
-
-func (s *Stream) RtmpCacheGOP(p *Packet) {
-	if p.IsMetadata {
-		s.Cache.MetaFull = true
-		s.Cache.MetaPacket = p
-		return
-	}
-	if p.IsAudio {
-		s.Cache.AudioFull = true
-		s.Cache.AudioPacket = p
-		return
-	}
-	if p.IsVideo {
-		s.Cache.VideoFull = true
-		s.Cache.VideoPacket = p
-		return
-	}
-}
-
-func (s *Stream) RtmpSendGOP() (err error) {
-	return
-}
-*/
