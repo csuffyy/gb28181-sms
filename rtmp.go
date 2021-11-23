@@ -58,18 +58,18 @@ var (
 )
 
 // 新来的rtmp连接 无法确定角色，确定后 日志文件 需重命名
-// StreamTimestamp.log(时间戳到毫秒) 重命名为 Publisher_live_cctv1.log
-// StreamTimestamp.log(时间戳到毫秒) 重命名为 Player_live_cctv1_ip_port.log
+// Stream_Timestamp.log(时间戳到毫秒) 重命名为 Publisher_live_cctv1.log
+// Stream_Timestamp.log(时间戳到毫秒) 重命名为 Player_live_cctv1_ip_port.log
 // /usr/local/sms/sms			执行程序
 // /usr/local/sms/sms.json		配置文件
 // /usr/local/sms/sms.log		程序日志文件
-// /usr/local/sms/log/StreamTimestamp.log.log	角色未确定时的日志
+// /usr/local/sms/log/Stream_Timestamp.log.log	角色未确定时的日志
 // /usr/local/sms/log/live_cctv1/Publisher_live_cctv1.log		发布者日志
 // /usr/local/sms/log/live_cctv1/Player_live_cctv1_ip_port.log	播放者日志
 // /usr/local/sms/hls/live_cctv1/cctv1.m3u8
 // /usr/local/sms/hls/live_cctv1/cctv1_001.ts
 type Stream struct {
-	LogFilename         string      // StreamTimestamp.log
+	LogFilename         string      // Stream_Timestamp.log
 	log                 *log.Logger // 每个发布者、播放者的日志都是独立的
 	Conn                net.Conn
 	ChunkSize           uint32
@@ -163,6 +163,8 @@ func RtmpHandler(c net.Conn) {
 	//log.Printf("%#v", s)
 	s.log.Printf("the stream have %d chunks", len(s.Chunks))
 	s.log.Printf("the stream is publisher %t", s.IsPublisher)
+	StreamLogRename(s)
+
 	if s.IsPublisher {
 		// for循环负责接收数据，发送如何处理 ???
 		// 方法1: 发送也在 for循环里做，这样可能会影响接收
@@ -192,22 +194,36 @@ func StreamLogCreate(fn string) (*log.Logger, error) {
 	return l, nil
 }
 
-func StreamLogRename(s *Stream) {
-	/*
-		// 文件打开状态下 也可以重命名
-		//func Mkdir(name string, perm FileMode) error {
-		err = os.MkdirAll("live/test", 0755)
-		if err != nil {
-			log.Println(err)
-			return
-		}
+func StreamLogRename(s *Stream) error {
+	// 1 创建live_cctv1文件夹
+	// 2 日志文件重命名
+	// Stream_Timestamp.log 重命名为 Publisher_live_cctv1.log
+	// Stream_Timestamp.log 重命名为 Player_live_cctv1_ip_port.log
+	var folder, fn string
+	if s.IsPublisher {
+		folder = fmt.Sprintf("%s_%s", s.AmfInfo.App, s.AmfInfo.PublishName)
+		fn = fmt.Sprintf("%s/Publisher_%s.log", folder, folder)
+	} else {
+		folder = fmt.Sprintf("%s_%s", s.AmfInfo.App, s.AmfInfo.StreamName)
+		fn = fmt.Sprintf("%s/Player_%s_%s.log", folder, folder, s.Conn.RemoteAddr())
+	}
 
-		err = os.Rename("aaa.log", "live/test/bbb.log")
-		if err != nil {
-			log.Println(err)
-			return
-		}
-	*/
+	err := os.MkdirAll(folder, 0755)
+	if err != nil {
+		log.Println(err)
+		return err
+	}
+
+	// 文件打开状态下 也可以重命名
+	err = os.Rename(s.LogFilename, fn)
+	if err != nil {
+		log.Println(err)
+		return err
+	}
+	log.Printf("%s rename to %s", s.LogFilename, fn)
+
+	s.LogFilename = fn
+	return nil
 }
 
 func NewStream(c net.Conn) *Stream {
