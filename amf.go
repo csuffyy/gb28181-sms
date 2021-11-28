@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"livego/protocol/amf"
-	"log"
 	"reflect"
 )
 
@@ -59,12 +58,12 @@ type Object map[string]interface{}
 // 序列化转结构化 AmfUnmarshal();  结构化转序列化 AmfMarshal();
 func AmfHandle(s *Stream, c *Chunk) error {
 	r := bytes.NewReader(c.MsgData)
-	vs, err := AmfUnmarshal(r) // 序列化转结构化
+	vs, err := AmfUnmarshal(s, r) // 序列化转结构化
 	if err != nil && err != io.EOF {
-		log.Println(err)
+		s.log.Println(err)
 		return err
 	}
-	log.Printf("Amf Unmarshal %#v", vs)
+	s.log.Printf("Amf Unmarshal %#v", vs)
 
 	switch vs[0].(string) {
 	case "connect":
@@ -109,7 +108,7 @@ func AmfHandle(s *Stream, c *Chunk) error {
 		return nil
 	default:
 		err = fmt.Errorf("Untreated AmfCmd %s", vs[0].(string))
-		log.Println(err)
+		s.log.Println(err)
 		return err
 	}
 	return nil
@@ -118,13 +117,13 @@ func AmfHandle(s *Stream, c *Chunk) error {
 /////////////////////////////////////////////////////////////////
 // amf decode
 /////////////////////////////////////////////////////////////////
-func AmfUnmarshal(r io.Reader) (vs []interface{}, err error) {
+func AmfUnmarshal(s *Stream, r io.Reader) (vs []interface{}, err error) {
 	var v interface{}
 	for {
-		log.Println("------")
-		v, err = AmfDecode(r)
+		s.log.Println("------")
+		v, err = AmfDecode(s, r)
 		if err != nil {
-			log.Println(err)
+			s.log.Println(err)
 			break
 		}
 		vs = append(vs, v)
@@ -132,74 +131,74 @@ func AmfUnmarshal(r io.Reader) (vs []interface{}, err error) {
 	return vs, err
 }
 
-func AmfDecode(r io.Reader) (interface{}, error) {
+func AmfDecode(s *Stream, r io.Reader) (interface{}, error) {
 	t, err := ReadUint8(r)
 	if err != nil {
-		log.Println(err)
+		s.log.Println(err)
 		return nil, err
 	}
-	log.Println("AmfType", t)
+	s.log.Println("AmfType", t)
 
 	switch t {
 	case Amf0MarkerNumber:
-		return Amf0DecodeNumber(r)
+		return Amf0DecodeNumber(s, r)
 	case Amf0MarkerBoolen:
-		return Amf0DecodeBoolean(r)
+		return Amf0DecodeBoolean(s, r)
 	case Amf0MarkerString:
-		return Amf0DecodeString(r)
+		return Amf0DecodeString(s, r)
 	case Amf0MarkerObject:
-		return Amf0DecodeObject(r)
+		return Amf0DecodeObject(s, r)
 	case Amf0MarkerNull:
-		return Amf0DecodeNull(r)
+		return Amf0DecodeNull(s, r)
 	case Amf0MarkerEcmaArray:
-		return Amf0DecodeEcmaArray(r)
+		return Amf0DecodeEcmaArray(s, r)
 	}
 	err = fmt.Errorf("Untreated AmfType %d", t)
-	log.Println(err)
+	s.log.Println(err)
 	return nil, err
 }
 
-func Amf0DecodeNumber(r io.Reader) (float64, error) {
+func Amf0DecodeNumber(s *Stream, r io.Reader) (float64, error) {
 	var ret float64
 	err := binary.Read(r, binary.BigEndian, &ret)
 	if err != nil {
 		if err != io.EOF {
-			log.Println(err)
+			s.log.Println(err)
 		}
 		return 0, err
 	}
-	log.Println(ret)
+	s.log.Println(ret)
 	return ret, nil
 }
 
-func Amf0DecodeBoolean(r io.Reader) (bool, error) {
+func Amf0DecodeBoolean(s *Stream, r io.Reader) (bool, error) {
 	var ret bool
 	err := binary.Read(r, binary.BigEndian, &ret)
 	if err != nil {
 		if err != io.EOF {
-			log.Println(err)
+			s.log.Println(err)
 		}
 		return false, err
 	}
-	log.Println(ret)
+	s.log.Println(ret)
 	return ret, nil
 }
 
-func Amf0DecodeString(r io.Reader) (string, error) {
+func Amf0DecodeString(s *Stream, r io.Reader) (string, error) {
 	len, err := ReadUint32(r, 2, BE)
 	if err != nil {
 		if err != io.EOF {
-			log.Println(err)
+			s.log.Println(err)
 		}
 		return "", err
 	}
 
 	ret, _ := ReadString(r, len)
-	log.Println(len, ret)
+	s.log.Println(len, ret)
 	return ret, nil
 }
 
-func Amf0DecodeObject(r io.Reader) (Object, error) {
+func Amf0DecodeObject(s *Stream, r io.Reader) (Object, error) {
 	ret := make(Object)
 	for {
 		// 00 00 09
@@ -210,96 +209,96 @@ func Amf0DecodeObject(r io.Reader) (Object, error) {
 		}
 
 		key, _ := ReadString(r, len)
-		log.Println(key)
+		s.log.Println(key)
 
-		value, err := AmfDecode(r)
+		value, err := AmfDecode(s, r)
 		if err != nil {
-			log.Println(err)
+			s.log.Println(err)
 			return nil, err
 		}
 		ret[key] = value
 	}
-	//log.Printf("%#v", ret)
+	//s.log.Printf("%#v", ret)
 	return ret, nil
 }
 
-func Amf0DecodeNull(r io.Reader) (interface{}, error) {
+func Amf0DecodeNull(s *Stream, r io.Reader) (interface{}, error) {
 	return nil, nil
 }
 
-func Amf0DecodeEcmaArray(r io.Reader) (Object, error) {
+func Amf0DecodeEcmaArray(s *Stream, r io.Reader) (Object, error) {
 	len, err := ReadUint32(r, 4, BE)
 	if err != nil {
 		if err != io.EOF {
-			log.Println(err)
+			s.log.Println(err)
 		}
 		return nil, err
 	}
-	log.Println("Amf EcmaArray len", len)
+	s.log.Println("Amf EcmaArray len", len)
 
-	ret, err := Amf0DecodeObject(r)
+	ret, err := Amf0DecodeObject(s, r)
 	if err != nil {
-		log.Println(err)
+		s.log.Println(err)
 		if err != io.EOF {
-			log.Println(err)
+			s.log.Println(err)
 		}
 		return nil, err
 	}
-	//log.Printf("%#v", ret)
+	//s.log.Printf("%#v", ret)
 	return ret, nil
 }
 
 /////////////////////////////////////////////////////////////////
 // amf encode
 /////////////////////////////////////////////////////////////////
-func AmfMarshal(args ...interface{}) ([]byte, error) {
+func AmfMarshal(s *Stream, args ...interface{}) ([]byte, error) {
 	buf := bytes.NewBuffer(nil)
 	for _, v := range args {
-		if _, err := AmfEncode(buf, v); err != nil {
-			log.Println(err)
+		if _, err := AmfEncode(s, buf, v); err != nil {
+			s.log.Println(err)
 			return nil, err
 		}
 	}
 	return buf.Bytes(), nil
 }
 
-func AmfEncode(buf io.Writer, v interface{}) (int, error) {
+func AmfEncode(s *Stream, buf io.Writer, v interface{}) (int, error) {
 	if v == nil {
-		return Amf0EncodeNull(buf)
+		return Amf0EncodeNull(s, buf)
 	}
 
 	val := reflect.ValueOf(v)
-	log.Println(v, val.Kind())
+	s.log.Println(v, val.Kind())
 	switch val.Kind() {
 	case reflect.String:
-		return Amf0EncodeString(buf, val.String(), true)
+		return Amf0EncodeString(s, buf, val.String(), true)
 	case reflect.Bool:
-		return Amf0EncodeBool(buf, val.Bool())
+		return Amf0EncodeBool(s, buf, val.Bool())
 	case reflect.Int:
-		return Amf0EncodeNumber(buf, float64(val.Int()))
+		return Amf0EncodeNumber(s, buf, float64(val.Int()))
 	case reflect.Uint32:
-		return Amf0EncodeNumber(buf, float64(val.Uint()))
+		return Amf0EncodeNumber(s, buf, float64(val.Uint()))
 	case reflect.Float32, reflect.Float64:
-		return Amf0EncodeNumber(buf, float64(val.Float()))
+		return Amf0EncodeNumber(s, buf, float64(val.Float()))
 	case reflect.Map:
-		return Amf0EncodeObject(buf, v.(Object))
+		return Amf0EncodeObject(s, buf, v.(Object))
 	}
 	err := fmt.Errorf("Untreated Amf0Marker %s", val.Kind())
-	log.Println(err)
+	s.log.Println(err)
 	return 0, err
 }
 
-func Amf0EncodeNull(buf io.Writer) (int, error) {
+func Amf0EncodeNull(s *Stream, buf io.Writer) (int, error) {
 	b := []byte{Amf0MarkerNull}
 	n, err := buf.Write(b)
 	if err != nil {
-		log.Println(err)
+		s.log.Println(err)
 		return 0, err
 	}
 	return n, nil
 }
 
-func Amf0EncodeString(buf io.Writer, v string, wType bool) (int, error) {
+func Amf0EncodeString(s *Stream, buf io.Writer, v string, wType bool) (int, error) {
 	var n int
 	if wType {
 		b := []byte{Amf0MarkerString}
@@ -313,13 +312,13 @@ func Amf0EncodeString(buf io.Writer, v string, wType bool) (int, error) {
 
 	m, err := buf.Write([]byte(v))
 	if err != nil {
-		log.Println(err)
+		s.log.Println(err)
 		return 0, err
 	}
 	return n + m, nil
 }
 
-func Amf0EncodeBool(buf io.Writer, v bool) (int, error) {
+func Amf0EncodeBool(s *Stream, buf io.Writer, v bool) (int, error) {
 	var n int
 	b := []byte{Amf0MarkerBoolen}
 	buf.Write(b)
@@ -332,13 +331,13 @@ func Amf0EncodeBool(buf io.Writer, v bool) (int, error) {
 
 	m, err := buf.Write(b)
 	if err != nil {
-		log.Println(err)
+		s.log.Println(err)
 		return 0, err
 	}
 	return n + m, nil
 }
 
-func Amf0EncodeNumber(buf io.Writer, v float64) (int, error) {
+func Amf0EncodeNumber(s *Stream, buf io.Writer, v float64) (int, error) {
 	var n int
 	b := []byte{Amf0MarkerNumber}
 	buf.Write(b)
@@ -346,13 +345,13 @@ func Amf0EncodeNumber(buf io.Writer, v float64) (int, error) {
 
 	err := binary.Write(buf, binary.BigEndian, &v)
 	if err != nil {
-		log.Println(err)
+		s.log.Println(err)
 		return 0, err
 	}
 	return n + 8, nil
 }
 
-func Amf0EncodeObject(buf io.Writer, o Object) (int, error) {
+func Amf0EncodeObject(s *Stream, buf io.Writer, o Object) (int, error) {
 	var n, m int
 	var err error
 	b := []byte{Amf0MarkerObject}
@@ -360,24 +359,24 @@ func Amf0EncodeObject(buf io.Writer, o Object) (int, error) {
 	n += 1
 
 	for k, v := range o {
-		m, err = Amf0EncodeString(buf, k, false)
+		m, err = Amf0EncodeString(s, buf, k, false)
 		if err != nil {
-			log.Println(err)
+			s.log.Println(err)
 			return 0, err
 		}
 		n += m
 
-		m, err = AmfEncode(buf, v)
+		m, err = AmfEncode(s, buf, v)
 		if err != nil {
-			log.Println(err)
+			s.log.Println(err)
 			return 0, err
 		}
 		n += m
 	}
 
-	m, err = Amf0EncodeString(buf, "", false)
+	m, err = Amf0EncodeString(s, buf, "", false)
 	if err != nil {
-		log.Println(err)
+		s.log.Println(err)
 		return 0, err
 	}
 	n += m
@@ -430,7 +429,7 @@ func AmfConnectHandle(s *Stream, vs []interface{}) error {
 			}
 		}
 	}
-	log.Printf("%#v", s.AmfInfo)
+	s.log.Printf("%#v", s.AmfInfo)
 	return nil
 }
 
@@ -440,26 +439,26 @@ func AmfConnectResponse(s *Stream, c *Chunk) error {
 	// 3 Set ChunkSize
 	// 4 User Control(StreamBegin)
 	// 5 Command Message (_result- connect response)
-	log.Println("Send Window Acknowledge Size")
+	s.log.Println("Send Window Acknowledge Size")
 	d := Uint32ToByte(2500000, nil, BE) // 33554432
 	rc := CreateMessage(MsgTypeIdWindowAckSize, 4, d)
 	MessageSplit(s, &rc)
 
-	log.Println("Set Peer BandWidth")
+	s.log.Println("Set Peer BandWidth")
 	d = make([]byte, 5)
 	Uint32ToByte(2500000, d[:4], BE)
 	d[4] = 2 // Limit Type: 0 is Hard, 1 is Soft, 2 is Dynamic
 	rc = CreateMessage(MsgTypeIdSetPeerBandwidth, 5, d)
 	MessageSplit(s, &rc)
 
-	log.Println("Set ChunkSize")
+	s.log.Println("Set ChunkSize")
 	d = Uint32ToByte(1024, nil, BE)
 	rc = CreateMessage(MsgTypeIdSetChunkSize, 4, d)
 	MessageSplit(s, &rc)
 	// 这里必须设置为1024, 因为上面已通知对方ChunkSize=1024
 	s.ChunkSize = 1024
 
-	log.Println("Send Command Message")
+	s.log.Println("Send Command Message")
 	rsps := make(Object)
 	rsps["fmsVer"] = "FMS/3,0,1,123"
 	rsps["capabilities"] = 31
@@ -468,10 +467,10 @@ func AmfConnectResponse(s *Stream, c *Chunk) error {
 	info["code"] = "NetConnection.Connect.Success"
 	info["description"] = "Connection succeeded."
 	info["objectEncoding"] = s.AmfInfo.ObjectEncoding
-	log.Println(rsps, info)
+	s.log.Println(rsps, info)
 
-	d, _ = AmfMarshal("_result", 1, rsps, info) // 结构化转序列化
-	log.Println(d)
+	d, _ = AmfMarshal(s, "_result", 1, rsps, info) // 结构化转序列化
+	s.log.Println(d)
 
 	rc = CreateMessage(MsgTypeIdCmdAmf0, uint32(len(d)), d)
 	rc.Csid = c.Csid
@@ -489,15 +488,15 @@ func AmfCreateStreamHandle(s *Stream, vs []interface{}) error {
 			s.AmfInfo.TransactionId = v.(float64)
 		}
 	}
-	log.Printf("%#v", s.AmfInfo)
+	s.log.Printf("%#v", s.AmfInfo)
 	return nil
 }
 
 func AmfCreateStreamResponse(s *Stream, c *Chunk) error {
 	// 1 Command Message (_result- createStream response)
-	log.Println("Send Command Message")
-	d, _ := AmfMarshal("_result", s.AmfInfo.TransactionId, nil, c.MsgStreamId)
-	log.Println(d)
+	s.log.Println("Send Command Message")
+	d, _ := AmfMarshal(s, "_result", s.AmfInfo.TransactionId, nil, c.MsgStreamId)
+	s.log.Println(d)
 
 	rc := CreateMessage(MsgTypeIdCmdAmf0, uint32(len(d)), d)
 	rc.Csid = c.Csid
@@ -520,10 +519,10 @@ func AmfPublishHandle(s *Stream, vs []interface{}) error {
 		case float64:
 			s.AmfInfo.TransactionId = v.(float64)
 		case amf.Object:
-			log.Println("Untreated AmfType")
+			s.log.Println("Untreated AmfType")
 		}
 	}
-	log.Printf("%#v", s.AmfInfo)
+	s.log.Printf("%#v", s.AmfInfo)
 	return nil
 }
 
@@ -533,8 +532,8 @@ func AmfPublishResponse(s *Stream, c *Chunk) error {
 	info["code"] = "NetStream.Publish.Start"
 	info["description"] = "Start publising."
 
-	d, _ := AmfMarshal("onStatus", 0, nil, info) // 结构化转序列化
-	log.Println(d)
+	d, _ := AmfMarshal(s, "onStatus", 0, nil, info) // 结构化转序列化
+	s.log.Println(d)
 
 	rc := CreateMessage(MsgTypeIdCmdAmf0, uint32(len(d)), d)
 	rc.Csid = c.Csid
@@ -561,12 +560,12 @@ func AmfPlayHandle(s *Stream, vs []interface{}) error {
 				s.AmfInfo.Duration = v.(float64)
 			}
 		case amf.Object:
-			log.Println("Untreated AmfType")
+			s.log.Println("Untreated AmfType")
 		case bool:
 			s.AmfInfo.Reset = v.(bool)
 		}
 	}
-	log.Printf("%#v", s.AmfInfo)
+	s.log.Printf("%#v", s.AmfInfo)
 	return nil
 }
 

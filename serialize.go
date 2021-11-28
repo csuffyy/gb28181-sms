@@ -257,7 +257,7 @@ func WriteUint32(w io.Writer, bo ByteOrder, u, n uint32) error {
 	} else {
 		bb = b[:n]
 	}
-	log.Println(len(bb), bb)
+	//log.Println(len(bb), bb)
 	_, err := WriteByte(w, bb)
 	if err != nil {
 		log.Println(err)

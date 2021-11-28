@@ -24,7 +24,7 @@ var (
 	h, v, d, u bool
 	c          string
 	conf       Config
-	Publishers map[string]*Stream // Domain_App_PublishName
+	Publishers map[string]*Stream // App_PublishName
 )
 
 type Config struct {

@@ -69,6 +69,7 @@ var (
 // /usr/local/sms/hls/live_cctv1/cctv1.m3u8
 // /usr/local/sms/hls/live_cctv1/cctv1_001.ts
 type Stream struct {
+	Key                 string
 	LogFilename         string      // Stream_Timestamp.log
 	log                 *log.Logger // 每个发布者、播放者的日志都是独立的
 	Conn                net.Conn
@@ -94,9 +95,9 @@ type Stream struct {
 // 3 Audio Header
 // 4 MediaData 里面有 I/B/P帧和音频帧, 按来的顺序存放，
 //   MediaData 里内容举例：I B P B A A B P I ...
-//MediaData里 最多有 GopCacheMax + 1 个 Gop的数据
-//比如GopCacheMax=2, 那么MediaData里最多有3个Gop, 第3个Gop不完整, 这样做发送时方便
-//当第4个Gop的关键帧到达的时，删除第1个Gop的数据
+//MediaData里 最多有 GopCacheMax 个 Gop的数据
+//比如GopCacheMax=2, 那么MediaData里最多有2个Gop, 第2个Gop不完整, 这样做发送时方便
+//当第3个Gop的关键帧到达的时，删除第1个Gop的数据
 type GopCache struct {
 	GopCacheMax int // 最多缓存几个Gop, 默认为1个
 	GopCacheNum int // VideoData里 I帧的个数
@@ -119,9 +120,12 @@ type Chunk struct {
 	MsgIndex    uint32 // 接收的数据 写到MsgData的哪里
 	MsgRemain   uint32 // MsgData 还有多少数据需要接收
 	Full        bool
-	DataType    string // "VideoKeyFrame", "VideoInterFrame", "AudioAacFrame"
-	//IsKeyFrame  bool   // GopCache删除过期数据时使用
+	DataType    string
 }
+
+// DataType    string
+// "Metadata", "VideoHeader", "AudioHeader",
+// "VideoKeyFrame", "VideoInterFrame", "AudioAacFrame"
 
 func RtmpServer() {
 	log.Println("start rtmp listen on", conf.RtmpListen)
@@ -179,7 +183,7 @@ func RtmpHandler(c net.Conn) {
 func GetTempLogFilename() string {
 	ts := utils.GetTimestamp("ms")
 	s := fmt.Sprintf("Stream_%d.log", ts)
-	log.Println(s)
+	log.Printf("stream tmp LogFile is %s", s)
 	return s
 }
 
@@ -248,33 +252,33 @@ func NewStream(c net.Conn) *Stream {
 // rtmp publisher
 /////////////////////////////////////////////////////////////////
 func RtmpPublisher(s *Stream) {
-	key := fmt.Sprintf("%s_%s", s.AmfInfo.App, s.AmfInfo.PublishName)
-	log.Println(key)
+	s.Key = fmt.Sprintf("%s_%s", s.AmfInfo.App, s.AmfInfo.PublishName)
+	s.log.Println(s.Key)
 
-	_, ok := Publishers[key]
+	_, ok := Publishers[s.Key]
 	if ok { // 发布者已存在, 断开连接并返回错误
-		log.Printf("publisher %s is exist", key)
+		s.log.Printf("publisher %s is exist", s.Key)
 		s.Conn.Close()
 		return
 	}
-	Publishers[key] = s
+	Publishers[s.Key] = s
 
 	go RtmpSender(s) // 给所有播放者发送数据
 
 	s.TransmitSwitch = "on"
 	i := 0
 	for {
-		log.Println("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx>>>", i)
+		s.log.Println("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx>>>", i)
 		if s.TransmitSwitch == "off" {
-			log.Printf("publisher %s close", key)
+			s.log.Printf("publisher %s close", s.Key)
 			s.Conn.Close()
 			return
 		}
 
 		// 接收数据 和 传递数据给发送者
 		if err := RtmpReceiver(s); err != nil {
-			log.Println(err)
-			log.Println("The connect closed by peer")
+			s.log.Println(err)
+			s.log.Println("The connect closed by peer")
 			s.Conn.Close()
 			return
 		}
@@ -302,18 +306,20 @@ func RtmpReceiver(s *Stream) error {
 	var c Chunk
 	var err error
 	for {
-		log.Println("==============================>>>", i)
+		s.log.Println("==============================>>>", i)
 		i++
 
 		// 接收 并 合并 数据
 		if c, err = MessageMerge(s, nil); err != nil {
-			log.Println(err)
+			s.log.Println(err)
+			s.log.Println("RtmpReceiver close")
+			close(s.DataChan)
 			return err
 		}
 
 		SendAckMessage(s, c.MsgLength)
 
-		log.Printf("Message TypeId %d, len %d", c.MsgTypeId, c.MsgLength)
+		s.log.Printf("Message TypeId %d, len %d", c.MsgTypeId, c.MsgLength)
 		if c.MsgTypeId == MsgTypeIdCmdAmf0 { // 20
 			AmfHandle(s, &c)
 		}
@@ -339,18 +345,19 @@ func RtmpReceiver(s *Stream) error {
 		c.MsgTypeId == MsgTypeIdDataAmf0 { // 18
 		MetadataHandle(s, &c)
 	}
-	s.DataChan <- &c
+	//s.DataChan <- &c
 
-	log.Println(s.GopCacheMax, s.GopCacheNum, s.MediaData.Len())
-	PrintList(s.MediaData)
+	s.log.Println(s.GopCacheMax, s.GopCacheNum, s.MediaData.Len())
+	PrintList(s, s.MediaData)
+	s.DataChan <- &c
 	return nil
 }
 
-func PrintList(l *list.List) {
+func PrintList(s *Stream, l *list.List) {
 	i := 0
 	for e := l.Front(); e != nil; e = e.Next() {
 		v := (e.Value).(*Chunk)
-		log.Println(i, v.DataType, v.MsgLength, v.Timestamp)
+		s.log.Println(i, v.DataType, v.MsgLength, v.Timestamp)
 		i++
 	}
 }
@@ -388,10 +395,10 @@ func AudioHandle(s *Stream, c *Chunk) error {
 	SoundType := c.MsgData[0] & 0x1           // 1bit
 
 	if SoundFormat == 10 {
-		log.Println("SoundFormat is AAC")
+		s.log.Println("SoundFormat is AAC")
 	} else {
 		err := fmt.Errorf("untreated SoundFormat %d", SoundFormat)
-		log.Println(err)
+		s.log.Println(err)
 		return err
 	}
 
@@ -399,10 +406,11 @@ func AudioHandle(s *Stream, c *Chunk) error {
 	//1: AAC raw
 	AACPacketType := c.MsgData[1]
 	// 10, 3, 1, 1, 0/1
-	log.Println(SoundFormat, SoundRate, SoundSize, SoundType, AACPacketType)
+	s.log.Println(SoundFormat, SoundRate, SoundSize, SoundType, AACPacketType)
 
 	if AACPacketType == 0 {
-		log.Println("This frame is AAC sequence header")
+		s.log.Println("This frame is AAC sequence header")
+		c.DataType = "AudioHeader"
 
 		// AudioSpecificConfig is explained in ISO 14496-3
 		var AacC AudioSpecificConfig
@@ -414,12 +422,12 @@ func AudioHandle(s *Stream, c *Chunk) error {
 		AacC.DependCoreCoder = (c.MsgData[3] & 0x2) >> 1 // 1bit
 		AacC.ExtensionFlag = c.MsgData[3] & 0x1          // 1bit
 		// 2, 4, 2, 0(1024), 0, 0
-		log.Printf("%#v", AacC)
+		s.log.Printf("%#v", AacC)
 
 		s.GopCache.AudioHeader = c
 	} else {
 		// Raw AAC frame data
-		log.Println("This frame is AAC raw")
+		s.log.Println("This frame is AAC raw")
 		c.DataType = "AudioAacFrame"
 		s.GopCache.MediaData.PushBack(c)
 	}
@@ -443,11 +451,11 @@ func GopCacheNew() GopCache {
 }
 
 func GopCacheUpdate(s *Stream) {
-	// 1 先判断CacheData里的关键帧个数 是否达到GopCacheMax+1, 如果没有就直接存入并退出
+	// 1 先判断CacheData里的关键帧个数 是否达到GopCacheMax, 如果没有就直接存入并退出
 	// 2 如果达到, 就先删除CacheData里最早的Gop(含音频帧), 然后再存入
 	gc := s.GopCache
-	log.Printf("GopCacheNum=%d, GopCacheMax=%d", gc.GopCacheNum, gc.GopCacheMax)
-	if gc.GopCacheNum < gc.GopCacheMax+1 {
+	s.log.Printf("GopCacheNum=%d, GopCacheMax=%d", gc.GopCacheNum, gc.GopCacheMax)
+	if gc.GopCacheNum < gc.GopCacheMax {
 		return
 	}
 
@@ -455,14 +463,14 @@ func GopCacheUpdate(s *Stream) {
 	var n *list.Element
 	for e := gc.MediaData.Front(); e != nil; e = n {
 		v := (e.Value).(*Chunk)
-		log.Printf("list loop: %s, %d", v.DataType, v.MsgLength)
+		s.log.Printf("list loop: %s, %d", v.DataType, v.MsgLength)
 		if v.DataType == "VideoKeyFrame" {
 			KeyFrameNum++
 		}
 		if KeyFrameNum == 2 {
 			break
 		}
-		log.Printf("list remove: %s, %d", v.DataType, v.MsgLength)
+		s.log.Printf("list remove: %s, %d", v.DataType, v.MsgLength)
 		n = e.Next()
 		gc.MediaData.Remove(e)
 	}
@@ -477,12 +485,12 @@ func GopCacheSend(s *Stream, gop *GopCache) {
 	// 3 发送AudioHeader
 	MessageSplit(s, gop.AudioHeader)
 	// 4 发送MediaData(包含最后收到的数据)
-	log.Println("GopCache.MediaData len ", gop.MediaData.Len())
+	s.log.Println("GopCache.MediaData len ", gop.MediaData.Len())
 	i := 0
 	for e := gop.MediaData.Front(); e != nil; e = e.Next() {
 		v := (e.Value).(*Chunk)
 		MessageSplit(s, v)
-		log.Println("GopCacheSend", i, v.DataType, v.MsgLength, v.Timestamp)
+		s.log.Println("GopCacheSend", i, v.DataType, v.MsgLength, v.Timestamp)
 		i++
 	}
 }
@@ -490,7 +498,7 @@ func GopCacheSend(s *Stream, gop *GopCache) {
 func VideoHandle(s *Stream, c *Chunk) error {
 	FrameType := c.MsgData[0] >> 4 // 4bit
 	CodecId := c.MsgData[0] & 0xf  // 4bit
-	log.Printf("FrameType=%d, CodecId=%d", FrameType, CodecId)
+	s.log.Printf("FrameType=%d, CodecId=%d", FrameType, CodecId)
 
 	//1: keyframe (for AVC, a seekable frame), 关键帧(I帧)
 	//2: inter frame (for AVC, a non- seekable frame), 非关键帧(P/B帧)
@@ -498,15 +506,15 @@ func VideoHandle(s *Stream, c *Chunk) error {
 	//4: generated keyframe (reserved for server use only)
 	//5: video info/command frame
 	if FrameType == 1 {
-		log.Println("FrameType is KeyFrame(I frame)")
+		s.log.Println("FrameType is KeyFrame(I frame)")
 		c.DataType = "VideoKeyFrame"
 	} else if FrameType == 2 {
 		// TODO: 如何区分是 B帧 还是 P帧
-		log.Println("FrameType is InterFrame(B/P frame)")
+		s.log.Println("FrameType is InterFrame(B/P frame)")
 		c.DataType = "VideoInterFrame"
 	} else {
 		err := fmt.Errorf("untreated FrameType %d", FrameType)
-		log.Println(err)
+		s.log.Println(err)
 		return err
 	}
 
@@ -519,7 +527,7 @@ func VideoHandle(s *Stream, c *Chunk) error {
 	//7: AVC, AVCVIDEOPACKET
 	if CodecId != 7 {
 		err := fmt.Errorf("CodecId is't AVC")
-		log.Println(err)
+		s.log.Println(err)
 		return err
 	}
 
@@ -531,7 +539,8 @@ func VideoHandle(s *Stream, c *Chunk) error {
 	CompositionTime := ByteToUint32(c.MsgData[2:5], BE) // 24bit
 
 	if AVCPacketType == 0 {
-		log.Println("This frame is AVC sequence header")
+		s.log.Println("This frame is AVC sequence header")
+		c.DataType = "VideoHeader"
 
 		// 前5个字节上面已经处理，AVC sequence header从第6个字节开始
 		//0x17, 0x00, 0x00, 0x00, 0x00, 0x01, 0x4d, 0x40, 0x1f, 0xff,
@@ -558,30 +567,30 @@ func VideoHandle(s *Stream, c *Chunk) error {
 		AvcC.PpsSize =
 			ByteToUint16(c.MsgData[EndPos+1:EndPos+3], BE) // 16bit, 0x0004
 		AvcC.PpsData = c.MsgData[EndPos+3:] // 4Byte
-		log.Printf("%#v", AvcC)
+		s.log.Printf("%#v", AvcC)
 
 		s.GopCache.VideoHeader = c
 	} else if AVCPacketType == 1 {
 		// One or more NALUs
-		log.Println("This frame is AVC NALU")
+		s.log.Println("This frame is AVC NALU")
+		s.GopCache.MediaData.PushBack(c)
 
 		//KeyFrameNum	1	2	3	4	关键帧个数
-		//CacheNum		0	1	2	3	Gop个数 为2的时候要开始删Gop了
+		//CacheNum		0	1	2	3	Gop个数 为1的时候要开始删Gop了
 		//CacheMax		1	1	1	1	Gop最大个数
 		if FrameType == 1 {
-			if s.GopCache.MediaData.Len() > 0 {
+			if s.GopCache.MediaData.Len() > 1 {
 				s.GopCache.GopCacheNum++
 			}
 			// 这里触发更新 CacheData
 			GopCacheUpdate(s)
 		}
-		s.GopCache.MediaData.PushBack(c)
 	} else {
 		// Empty
-		log.Println("This frame is AVC end of sequence")
+		s.log.Println("This frame is AVC end of sequence")
 	}
 
-	log.Printf("AVCPacketType=%d, Composition=%d, DataLen=%d",
+	s.log.Printf("AVCPacketType=%d, Composition=%d, DataLen=%d",
 		AVCPacketType, CompositionTime, len(c.MsgData[5:]))
 	return nil
 }
@@ -604,13 +613,14 @@ type AVCDecoderConfigurationRecord struct {
 
 // Metadata 数据要缓存起来，发送给播放者
 func MetadataHandle(s *Stream, c *Chunk) error {
+	c.DataType = "Metadata"
 	r := bytes.NewReader(c.MsgData)
-	vs, err := AmfUnmarshal(r) // 序列化转结构化
+	vs, err := AmfUnmarshal(s, r) // 序列化转结构化
 	if err != nil && err != io.EOF {
-		log.Println(err)
+		s.log.Println(err)
 		return err
 	}
-	log.Printf("Amf Unmarshal %#v", vs)
+	s.log.Printf("Amf Unmarshal %#v", vs)
 
 	s.GopCache.MetaData = c
 	return nil
@@ -623,16 +633,19 @@ func RtmpSender(s *Stream) {
 	for {
 		c, ok := <-s.DataChan
 		if !ok {
-			log.Println("RtmpSender close")
-			// TODO: 释放所有播放者和其他资源
+			s.log.Println("RtmpSender close")
+			// 释放所有播放者和其他资源
+			s.log.Printf("release publisher %s resource", s.Key)
+			delete(Publishers, s.Key)
 			return
 		}
 
-		log.Println(len(s.Players))
+		s.log.Printf("player num is %d, send DataType is %s",
+			len(s.Players), c.DataType)
 		for _, p := range s.Players {
 			// 新播放者，先发送缓存的gop数据，再发送最新数据
 			// 老播放者，直接发送最新数据
-			log.Println(p.NewPlayer)
+			s.log.Println(p.NewPlayer)
 			if p.NewPlayer == true {
 				p.NewPlayer = false
 				GopCacheSend(p, &s.GopCache)
@@ -648,18 +661,18 @@ func RtmpSender(s *Stream) {
 /////////////////////////////////////////////////////////////////
 func RtmpPlayer(s *Stream) {
 	key := fmt.Sprintf("%s_%s", s.AmfInfo.App, s.AmfInfo.StreamName)
-	log.Println(key)
+	s.log.Println(key)
 
 	p, ok := Publishers[key]
 	if !ok { // 发布者不存在, 断开连接并返回错误
-		log.Printf("publisher %s isn't exist", key)
+		s.log.Printf("publisher %s isn't exist", key)
 		s.Conn.Close()
 		return
 	}
 
 	key = fmt.Sprintf("%s_%s_%s", s.AmfInfo.App, s.AmfInfo.StreamName,
 		s.Conn.RemoteAddr().String())
-	log.Println(key)
+	s.log.Println(key)
 	p.Players[key] = s
 }
 
@@ -681,41 +694,41 @@ func RtmpHandshakeServer(s *Stream) (err error) {
 	S2 := S0S1S2[1536+1:]
 
 	if _, err = io.ReadFull(s.Conn, C0C1); err != nil {
-		log.Println(err)
+		s.log.Println(err)
 		return
 	}
 
 	// 0x03 rtmp协议版本号, 明文; 0x06 密文;
 	if C0[0] != 3 {
 		err = fmt.Errorf("invalid client rtmp version %d", C0[0])
-		log.Println(err)
+		s.log.Println(err)
 		return
 	}
 	S0[0] = 3
 
 	cZero := ByteToUint32(C1[4:8], BE)
 	//cZero := ByteToUint32BE(C1[4:8])
-	log.Printf("cZero: 0x%x", cZero)
+	s.log.Printf("cZero: 0x%x", cZero)
 	if cZero == 0 {
-		log.Println("rtmp simple handshake")
+		s.log.Println("rtmp simple handshake")
 		copy(S1, C2)
 		copy(S2, C1)
 	} else {
-		log.Println("rtmp complex handshake")
-		err = CreateComplexS1S2(C1, S1, S2)
+		s.log.Println("rtmp complex handshake")
+		err = CreateComplexS1S2(s, C1, S1, S2)
 		if err != nil {
-			log.Println(err)
+			s.log.Println(err)
 			return
 		}
 	}
 
 	if _, err = s.Conn.Write(S0S1S2); err != nil {
-		log.Println(err)
+		s.log.Println(err)
 		return
 	}
 
 	if _, err = io.ReadFull(s.Conn, C2); err != nil {
-		log.Println(err)
+		s.log.Println(err)
 		return
 	}
 	return
@@ -729,17 +742,18 @@ func RtmpHandshakeServer(s *Stream) (err error) {
 // n = offset的值
 // 简单握手时c2(1536): time(4) + time(4) + randomEcho(1528)
 // 复杂握手时c2(1536): randomData(1504) + digestData(32)
-func CreateComplexS1S2(C1, S1, S2 []byte) error {
+func CreateComplexS1S2(s *Stream, C1, S1, S2 []byte) error {
 	// 发起rtmp连接的一方key用FPKeyP，被连接的一方key用FMSKeyP
 	// 1 重新计算C1的digest和C1中的digest比较,一样才行
 	// 2 计算S1的digest
 	// 3 计算S2的key和digest
 	var c1Digest []byte
-	if c1Digest = DigestFind(C1, 8); c1Digest == nil {
-		c1Digest = DigestFind(C1, 772)
+	if c1Digest = DigestFind(s, C1, 8); c1Digest == nil {
+		c1Digest = DigestFind(s, C1, 772)
 	}
 	if c1Digest == nil {
 		err := fmt.Errorf("can't find digest in C1")
+		s.log.Println(err)
 		return err
 	}
 
@@ -754,17 +768,17 @@ func CreateComplexS1S2(C1, S1, S2 []byte) error {
 	rand.Read(S1[8:])
 	pos := DigestFindPos(S1, 8)
 	s1Digest := DigestCreate(S1, pos, FMSKeyP)
-	log.Println("s1Digest create:", s1Digest)
+	s.log.Println("s1Digest create:", s1Digest)
 	copy(S1[pos:], s1Digest)
 
 	// FIXME
 	s2DigestKey := DigestCreate(c1Digest, -1, FMSKey)
-	log.Println("s2DigestKey create:", s2DigestKey)
+	s.log.Println("s2DigestKey create:", s2DigestKey)
 
 	rand.Read(S2)
 	pos = len(S2) - 32
 	s2Digest := DigestCreate(S2, pos, s2DigestKey)
-	log.Println("s2Digest create:", s2Digest)
+	s.log.Println("s2Digest create:", s2Digest)
 	copy(S2[pos:], s2Digest)
 	return nil
 }
@@ -790,11 +804,11 @@ func DigestCreate(b []byte, pos int, key []byte) []byte {
 	return h.Sum(nil)
 }
 
-func DigestFind(C1 []byte, base int) []byte {
+func DigestFind(s *Stream, C1 []byte, base int) []byte {
 	pos := DigestFindPos(C1, base)
 	c1Digest := DigestCreate(C1, pos, FPKeyP)
-	log.Println("c1Digest in C1:", C1[pos:pos+32])
-	log.Println("c1Digest create:", c1Digest)
+	s.log.Println("c1Digest in C1:", C1[pos:pos+32])
+	s.log.Println("c1Digest create:", c1Digest)
 	if hmac.Equal(C1[pos:pos+32], c1Digest) {
 		return c1Digest
 	}
@@ -811,21 +825,21 @@ func RtmpHandleMessage(s *Stream) (err error) {
 	var i uint32
 	c := &Chunk{}
 	for {
-		log.Println("==============================>>>", i)
+		s.log.Println("==============================>>>", i)
 		i++
 
 		if _, err = MessageMerge(s, c); err != nil {
-			log.Println(err)
+			s.log.Println(err)
 			return
 		}
 		if err = MessageHandle(s, c); err != nil {
-			log.Println(err)
+			s.log.Println(err)
 			return
 		}
 
 		SendAckMessage(s, c.MsgLength)
 		if s.MessageHandleDone {
-			log.Println("MessageHandleDone")
+			s.log.Println("MessageHandleDone")
 			break
 		}
 	}
@@ -841,21 +855,21 @@ func MessageHandle(s *Stream, c *Chunk) error {
 		// 取值范围是 2的31次方 [1-2147483647]
 		s.ChunkSize = ByteToUint32(c.MsgData, BE)
 		s.RemoteChunkSize = s.ChunkSize
-		log.Println("MsgTypeIdSetChunkSize", s.ChunkSize)
+		s.log.Println("MsgTypeIdSetChunkSize", s.ChunkSize)
 	case MsgTypeIdUserControl:
-		log.Println("MsgTypeIdUserControl")
+		s.log.Println("MsgTypeIdUserControl")
 	case MsgTypeIdWindowAckSize:
 		s.WindowAckSize = ByteToUint32(c.MsgData, BE)
 		s.RemoteWindowAckSize = s.WindowAckSize
-		log.Println("MsgTypeIdWindowAckSize", s.WindowAckSize)
+		s.log.Println("MsgTypeIdWindowAckSize", s.WindowAckSize)
 	case MsgTypeIdDataAmf0, MsgTypeIdShareAmf0, MsgTypeIdCmdAmf0:
 		if err := AmfHandle(s, c); err != nil {
-			log.Println(err)
+			s.log.Println(err)
 			return err
 		}
 	default:
 		err := fmt.Errorf("Untreated MsgTypeId %d", c.MsgTypeId)
-		log.Println(err)
+		s.log.Println(err)
 		return err
 	}
 	return nil
@@ -881,7 +895,7 @@ func MessageMerge(s *Stream, c *Chunk) (Chunk, error) {
 	for {
 		bh, err = ReadUint32(s.Conn, 1, BE)
 		if err != nil {
-			log.Println(err)
+			s.log.Println(err)
 			return sc, err
 		}
 		fmt = bh >> 6
@@ -896,7 +910,7 @@ func MessageMerge(s *Stream, c *Chunk) (Chunk, error) {
 			id, _ := ReadUint32(s.Conn, 2, BE) // [0, 65535]
 			csid = id + 64                     // [64, 65599]
 		}
-		log.Println("fmt:", fmt, "csid:", csid)
+		s.log.Println("fmt:", fmt, "csid:", csid)
 
 		// 一个rtmp连接 可以发送很多流, 一般情况 就一个流
 		// 一路流里 可以有 多种数据类型，音频 视频 命令 等
@@ -909,13 +923,13 @@ func MessageMerge(s *Stream, c *Chunk) (Chunk, error) {
 		sc.Fmt = fmt
 		sc.Csid = csid
 		if err := ChunkAssemble(s, &sc); err != nil {
-			log.Println(err)
+			s.log.Println(err)
 			return sc, err
 		}
 
 		s.Chunks[csid] = sc
 		if sc.Full {
-			log.Println("chunk Full")
+			s.log.Println("chunk Full")
 			if c != nil {
 				*c = sc
 			}
@@ -936,7 +950,7 @@ func ChunkAssemble(s *Stream, c *Chunk) error {
 		c.MsgLength, _ = ReadUint32(s.Conn, 3, BE)
 		c.MsgTypeId, _ = ReadUint32(s.Conn, 1, BE)
 		c.MsgStreamId, _ = ReadUint32(s.Conn, 4, LE)
-		log.Println(c.MsgLength, c.MsgTypeId, c.MsgStreamId)
+		s.log.Println(c.MsgLength, c.MsgTypeId, c.MsgStreamId)
 		if c.Timestamp == 0xffffff {
 			c.Timestamp, _ = ReadUint32(s.Conn, 4, BE)
 			c.TimeExted = true
@@ -952,7 +966,7 @@ func ChunkAssemble(s *Stream, c *Chunk) error {
 		c.TimeDelta, _ = ReadUint32(s.Conn, 3, BE)
 		c.MsgLength, _ = ReadUint32(s.Conn, 3, BE)
 		c.MsgTypeId, _ = ReadUint32(s.Conn, 1, BE)
-		log.Println(c.MsgLength, c.MsgTypeId)
+		s.log.Println(c.MsgLength, c.MsgTypeId)
 		if c.TimeDelta == 0xffffff {
 			c.Timestamp, _ = ReadUint32(s.Conn, 4, BE)
 			c.TimeExted = true
@@ -1002,7 +1016,7 @@ func ChunkAssemble(s *Stream, c *Chunk) error {
 
 	buf := c.MsgData[c.MsgIndex : c.MsgIndex+size]
 	if _, err := s.Conn.Read(buf); err != nil {
-		log.Println(err)
+		s.log.Println(err)
 		return err
 	}
 	c.MsgIndex += size
@@ -1012,7 +1026,7 @@ func ChunkAssemble(s *Stream, c *Chunk) error {
 		// 为了不打印大量的音视频数据
 		d := c.MsgData
 		c.MsgData = nil
-		log.Printf("%#v", c)
+		s.log.Printf("%#v", c)
 		c.MsgData = d
 	}
 	return nil
@@ -1072,7 +1086,7 @@ END:
 func MessageSplit(s *Stream, c *Chunk) error {
 	var i, si, ei, div, sLen uint32
 	n := c.MsgLength/s.ChunkSize + 1
-	log.Println(c.MsgLength, s.ChunkSize, n)
+	s.log.Println(c.MsgLength, s.ChunkSize, n)
 
 	for i = 0; i < n; i++ {
 		if i != 0 {
@@ -1081,7 +1095,7 @@ func MessageSplit(s *Stream, c *Chunk) error {
 
 		// send chunk header
 		if err := ChunkHeaderAssemble(s, c); err != nil {
-			log.Println(err)
+			s.log.Println(err)
 			return err
 		}
 
@@ -1097,12 +1111,12 @@ func MessageSplit(s *Stream, c *Chunk) error {
 		}
 		buf := c.MsgData[si:ei]
 		if _, err := s.Conn.Write(buf); err != nil {
-			log.Println(err)
+			s.log.Println(err)
 			return err
 		}
 
 		if sLen >= c.MsgLength {
-			log.Println("Message send over")
+			s.log.Println("Message send over")
 			break
 		}
 	}

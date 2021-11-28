@@ -5,6 +5,8 @@
 *.so
 *.dylib
 sms
+sms.log
+live_*/
 
 # Test binary, built with `go test -c`
 *.test
