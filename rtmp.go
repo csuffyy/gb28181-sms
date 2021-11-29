@@ -108,6 +108,7 @@ type GopCache struct {
 }
 
 type Chunk struct {
+	FmtFirst    uint32 // 发送的时候要用
 	Fmt         uint32 // format
 	Csid        uint32 // chunk stream id
 	Timestamp   uint32
@@ -429,6 +430,7 @@ func AudioHandle(s *Stream, c *Chunk) error {
 		// Raw AAC frame data
 		s.log.Println("This frame is AAC raw")
 		c.DataType = "AudioAacFrame"
+		c.Fmt = c.FmtFirst
 		s.GopCache.MediaData.PushBack(c)
 	}
 	return nil
@@ -479,13 +481,17 @@ func GopCacheUpdate(s *Stream) {
 
 func GopCacheSend(s *Stream, gop *GopCache) {
 	// 1 发送Metadata
+	s.log.Println("send Metadata")
 	MessageSplit(s, gop.MetaData)
 	// 2 发送VideoHeader
+	s.log.Println("send VideoHeader")
 	MessageSplit(s, gop.VideoHeader)
 	// 3 发送AudioHeader
+	s.log.Println("send AudioHeader")
 	MessageSplit(s, gop.AudioHeader)
 	// 4 发送MediaData(包含最后收到的数据)
-	s.log.Println("GopCache.MediaData len ", gop.MediaData.Len())
+	s.log.Println("send MediaData")
+	s.log.Println("GopCache.MediaData len", gop.MediaData.Len())
 	i := 0
 	for e := gop.MediaData.Front(); e != nil; e = e.Next() {
 		v := (e.Value).(*Chunk)
@@ -573,6 +579,7 @@ func VideoHandle(s *Stream, c *Chunk) error {
 	} else if AVCPacketType == 1 {
 		// One or more NALUs
 		s.log.Println("This frame is AVC NALU")
+		c.Fmt = c.FmtFirst
 		s.GopCache.MediaData.PushBack(c)
 
 		//KeyFrameNum	1	2	3	4	关键帧个数
@@ -640,12 +647,12 @@ func RtmpSender(s *Stream) {
 			return
 		}
 
-		s.log.Printf("player num is %d, send DataType is %s",
-			len(s.Players), c.DataType)
+		s.log.Printf("player num is %d, send DataType is %s, size is %d",
+			len(s.Players), c.DataType, c.MsgLength)
 		for _, p := range s.Players {
 			// 新播放者，先发送缓存的gop数据，再发送最新数据
 			// 老播放者，直接发送最新数据
-			s.log.Println(p.NewPlayer)
+			s.log.Printf("%s is NewPlayer %t", p.Key, p.NewPlayer)
 			if p.NewPlayer == true {
 				p.NewPlayer = false
 				GopCacheSend(p, &s.GopCache)
@@ -670,10 +677,10 @@ func RtmpPlayer(s *Stream) {
 		return
 	}
 
-	key = fmt.Sprintf("%s_%s_%s", s.AmfInfo.App, s.AmfInfo.StreamName,
+	s.Key = fmt.Sprintf("%s_%s_%s", s.AmfInfo.App, s.AmfInfo.StreamName,
 		s.Conn.RemoteAddr().String())
-	s.log.Println(key)
-	p.Players[key] = s
+	s.log.Println(s.Key)
+	p.Players[s.Key] = s
 }
 
 /////////////////////////////////////////////////////////////////
@@ -892,6 +899,7 @@ func MessageMerge(s *Stream, c *Chunk) (Chunk, error) {
 	var bh, fmt, csid uint32 // basic header
 	var err error
 	var sc Chunk
+	i := 0
 	for {
 		bh, err = ReadUint32(s.Conn, 1, BE)
 		if err != nil {
@@ -919,6 +927,11 @@ func MessageMerge(s *Stream, c *Chunk) (Chunk, error) {
 		if !ok {
 			sc = Chunk{}
 		}
+
+		if i == 0 {
+			sc.FmtFirst = fmt
+		}
+		i++
 
 		sc.Fmt = fmt
 		sc.Csid = csid
@@ -1092,6 +1105,8 @@ func MessageSplit(s *Stream, c *Chunk) error {
 		if i != 0 {
 			c.Fmt = 3
 		}
+		s.log.Printf("send fmt=%d, MsgTypeId=%d, MsgStreamId=%d",
+			c.Fmt, c.MsgTypeId, c.MsgStreamId)
 
 		// send chunk header
 		if err := ChunkHeaderAssemble(s, c); err != nil {

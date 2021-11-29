@@ -104,7 +104,7 @@ func AmfHandle(s *Stream, c *Chunk) error {
 		s.MessageHandleDone = true
 	//case "FCUnpublish":
 	//case "deleteStream":
-	case "getStreamLength": // play 交互出现
+	case "getStreamLength": // play交互出现, 获取stream的时间长度
 		return nil
 	default:
 		err = fmt.Errorf("Untreated AmfCmd %s", vs[0].(string))
@@ -439,19 +439,19 @@ func AmfConnectResponse(s *Stream, c *Chunk) error {
 	// 3 Set ChunkSize
 	// 4 User Control(StreamBegin)
 	// 5 Command Message (_result- connect response)
-	s.log.Println("Send Window Acknowledge Size")
+	s.log.Println("Send Window Acknowledge Size = 2500000")
 	d := Uint32ToByte(2500000, nil, BE) // 33554432
 	rc := CreateMessage(MsgTypeIdWindowAckSize, 4, d)
 	MessageSplit(s, &rc)
 
-	s.log.Println("Set Peer BandWidth")
+	s.log.Println("Set Peer BandWidth = 2500000")
 	d = make([]byte, 5)
 	Uint32ToByte(2500000, d[:4], BE)
 	d[4] = 2 // Limit Type: 0 is Hard, 1 is Soft, 2 is Dynamic
 	rc = CreateMessage(MsgTypeIdSetPeerBandwidth, 5, d)
 	MessageSplit(s, &rc)
 
-	s.log.Println("Set ChunkSize")
+	s.log.Println("Set ChunkSize = 1024")
 	d = Uint32ToByte(1024, nil, BE)
 	rc = CreateMessage(MsgTypeIdSetChunkSize, 4, d)
 	MessageSplit(s, &rc)
@@ -569,6 +569,84 @@ func AmfPlayHandle(s *Stream, vs []interface{}) error {
 	return nil
 }
 
+// User Control Message EventType:
+// StreamBegin		(=0)
+// StreamEOF		(=1)
+// StreamDry		(=2)
+// SetBufferLength	(=3)
+// StreamIsRecorded	(=4)
+// PingRequest		(=6)
+// PingResponse		(=5)
 func AmfPlayResponse(s *Stream, c *Chunk) error {
+	// 1 send User Control Message EventType = 4
+	// 2 send User Control Message EventType = 0
+	// 3 Command Message(onStatus-play reset)
+	// 4 Command Message(onStatus-play start)
+	// 5 Command Message(onStatus-data start)
+	// 6 Command Message(onStatus-play PublishNotify)
+
+	s.log.Println("Send User Control (StreamIsRecorded)")
+	d := make([]byte, 6)
+	Uint16ToByte(4, d[0:2], BE) // EventType
+	Uint32ToByte(1, d[2:], BE)  // StreamId
+	rc := CreateMessage(MsgTypeIdUserControl, 6, d)
+	rc.MsgStreamId = 1
+	MessageSplit(s, &rc)
+
+	s.log.Println("Send User Control (StreamBegin)")
+	//d = make([]byte, 6)
+	Uint16ToByte(0, d[0:2], BE) // EventType
+	Uint32ToByte(1, d[2:], BE)  // StreamId
+	rc = CreateMessage(MsgTypeIdUserControl, 6, d)
+	rc.MsgStreamId = 1
+	MessageSplit(s, &rc)
+
+	s.log.Println("Send onStatus-play reset")
+	info := make(Object)
+	info["level"] = "status"
+	info["code"] = "NetStream.Play.Reset"
+	info["description"] = "Playing and resetting stream."
+	d, _ = AmfMarshal(s, "onStatus", 0, nil, info) // 结构化转序列化
+	s.log.Println(d)
+	rc = CreateMessage(MsgTypeIdCmdAmf0, uint32(len(d)), d)
+	rc.Csid = c.Csid
+	rc.MsgStreamId = c.MsgStreamId
+	MessageSplit(s, &rc)
+
+	s.log.Println("Send onStatus-play start")
+	//info = make(Object)
+	info["level"] = "status"
+	info["code"] = "NetStream.Play.Start"
+	info["description"] = "Started playing stream."
+	d, _ = AmfMarshal(s, "onStatus", 0, nil, info) // 结构化转序列化
+	s.log.Println(d)
+	rc = CreateMessage(MsgTypeIdCmdAmf0, uint32(len(d)), d)
+	rc.Csid = c.Csid
+	rc.MsgStreamId = c.MsgStreamId
+	MessageSplit(s, &rc)
+
+	s.log.Println("Send onStatus-data start")
+	//info = make(Object)
+	info["level"] = "status"
+	info["code"] = "NetStream.Data.Start"
+	info["description"] = "Started playing stream."
+	d, _ = AmfMarshal(s, "onStatus", 0, nil, info) // 结构化转序列化
+	s.log.Println(d)
+	rc = CreateMessage(MsgTypeIdCmdAmf0, uint32(len(d)), d)
+	rc.Csid = c.Csid
+	rc.MsgStreamId = c.MsgStreamId
+	MessageSplit(s, &rc)
+
+	s.log.Println("Send onStatus-play PublishNotify")
+	//info = make(Object)
+	info["level"] = "status"
+	info["code"] = "NetStream.Play.PublishNotify"
+	info["description"] = "Started playing notify."
+	d, _ = AmfMarshal(s, "onStatus", 0, nil, info) // 结构化转序列化
+	s.log.Println(d)
+	rc = CreateMessage(MsgTypeIdCmdAmf0, uint32(len(d)), d)
+	rc.Csid = c.Csid
+	rc.MsgStreamId = c.MsgStreamId
+	MessageSplit(s, &rc)
 	return nil
 }
