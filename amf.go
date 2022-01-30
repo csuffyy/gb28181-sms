@@ -439,26 +439,26 @@ func AmfConnectResponse(s *Stream, c *Chunk) error {
 	// 3 Set ChunkSize
 	// 4 User Control(StreamBegin)
 	// 5 Command Message (_result- connect response)
-	s.log.Println("Send Window Acknowledge Size = 2500000")
+	s.log.Println("---> Send Window Acknowledge Size = 2500000")
 	d := Uint32ToByte(2500000, nil, BE) // 33554432
 	rc := CreateMessage(MsgTypeIdWindowAckSize, 4, d)
 	MessageSplit(s, &rc)
 
-	s.log.Println("Set Peer BandWidth = 2500000")
+	s.log.Println("---> Set Peer BandWidth = 2500000")
 	d = make([]byte, 5)
 	Uint32ToByte(2500000, d[:4], BE)
 	d[4] = 2 // Limit Type: 0 is Hard, 1 is Soft, 2 is Dynamic
 	rc = CreateMessage(MsgTypeIdSetPeerBandwidth, 5, d)
 	MessageSplit(s, &rc)
 
-	s.log.Println("Set ChunkSize = 1024")
+	s.log.Println("---> Set ChunkSize = 1024")
 	d = Uint32ToByte(1024, nil, BE)
 	rc = CreateMessage(MsgTypeIdSetChunkSize, 4, d)
 	MessageSplit(s, &rc)
 	// 这里必须设置为1024, 因为上面已通知对方ChunkSize=1024
 	s.ChunkSize = 1024
 
-	s.log.Println("Send Command Message")
+	s.log.Println("---> Send Command Message")
 	rsps := make(Object)
 	rsps["fmsVer"] = "FMS/3,0,1,123"
 	rsps["capabilities"] = 31
@@ -494,7 +494,7 @@ func AmfCreateStreamHandle(s *Stream, vs []interface{}) error {
 
 func AmfCreateStreamResponse(s *Stream, c *Chunk) error {
 	// 1 Command Message (_result- createStream response)
-	s.log.Println("Send Command Message")
+	s.log.Println("---> Send Command Message")
 	d, _ := AmfMarshal(s, "_result", s.AmfInfo.TransactionId, nil, c.MsgStreamId)
 	s.log.Println(d)
 
@@ -585,7 +585,7 @@ func AmfPlayResponse(s *Stream, c *Chunk) error {
 	// 5 Command Message(onStatus-data start)
 	// 6 Command Message(onStatus-play PublishNotify)
 
-	s.log.Println("Send User Control (StreamIsRecorded)")
+	s.log.Println("---> Send User Control (StreamIsRecorded)")
 	d := make([]byte, 6)
 	Uint16ToByte(4, d[0:2], BE) // EventType
 	Uint32ToByte(1, d[2:], BE)  // StreamId
@@ -593,7 +593,7 @@ func AmfPlayResponse(s *Stream, c *Chunk) error {
 	rc.MsgStreamId = 1
 	MessageSplit(s, &rc)
 
-	s.log.Println("Send User Control (StreamBegin)")
+	s.log.Println("---> Send User Control (StreamBegin)")
 	//d = make([]byte, 6)
 	Uint16ToByte(0, d[0:2], BE) // EventType
 	Uint32ToByte(1, d[2:], BE)  // StreamId
@@ -601,7 +601,7 @@ func AmfPlayResponse(s *Stream, c *Chunk) error {
 	rc.MsgStreamId = 1
 	MessageSplit(s, &rc)
 
-	s.log.Println("Send onStatus-play reset")
+	s.log.Println("---> Send onStatus-play reset")
 	info := make(Object)
 	info["level"] = "status"
 	info["code"] = "NetStream.Play.Reset"
@@ -613,7 +613,7 @@ func AmfPlayResponse(s *Stream, c *Chunk) error {
 	rc.MsgStreamId = c.MsgStreamId
 	MessageSplit(s, &rc)
 
-	s.log.Println("Send onStatus-play start")
+	s.log.Println("---> Send onStatus-play start")
 	//info = make(Object)
 	info["level"] = "status"
 	info["code"] = "NetStream.Play.Start"
@@ -625,7 +625,7 @@ func AmfPlayResponse(s *Stream, c *Chunk) error {
 	rc.MsgStreamId = c.MsgStreamId
 	MessageSplit(s, &rc)
 
-	s.log.Println("Send onStatus-data start")
+	s.log.Println("---> Send onStatus-data start")
 	//info = make(Object)
 	info["level"] = "status"
 	info["code"] = "NetStream.Data.Start"
@@ -637,7 +637,7 @@ func AmfPlayResponse(s *Stream, c *Chunk) error {
 	rc.MsgStreamId = c.MsgStreamId
 	MessageSplit(s, &rc)
 
-	s.log.Println("Send onStatus-play PublishNotify")
+	s.log.Println("---> Send onStatus-play PublishNotify")
 	//info = make(Object)
 	info["level"] = "status"
 	info["code"] = "NetStream.Play.PublishNotify"
