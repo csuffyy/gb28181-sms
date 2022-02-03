@@ -74,6 +74,22 @@ func ByteToUint32(b []byte, bo ByteOrder) uint32 {
 	return u
 }
 
+func ByteToInt32(b []byte, bo ByteOrder) int32 {
+	n := len(b)
+	if n > 4 {
+		n = 4
+	}
+	var u int32
+	for i := 0; i < n; i++ {
+		if bo == BE {
+			u = u<<8 + int32(b[i])
+		} else {
+			u += int32(b[i]) << int32(i*8)
+		}
+	}
+	return u
+}
+
 func ByteToUint64(b []byte, bo ByteOrder) uint64 {
 	n := len(b)
 	if n > 8 {
@@ -95,9 +111,24 @@ func Uint16ToByte(u uint16, b []byte, bo ByteOrder) []byte {
 	bb := make([]byte, 2)
 	for i := 0; i < 2; i++ {
 		if bo == BE {
-			bb[i] = byte(u >> uint16((4-i-1)*8))
+			bb[i] = byte(u >> uint16((2-i-1)*8))
 		} else {
 			bb[i] = byte(u >> uint16(i*8))
+		}
+	}
+	if b != nil {
+		copy(b, bb)
+	}
+	return bb
+}
+
+func Uint24ToByte(u uint32, b []byte, bo ByteOrder) []byte {
+	bb := make([]byte, 3)
+	for i := 0; i < 3; i++ {
+		if bo == BE {
+			bb[i] = byte((u >> uint32((4-i-2)*8)) & 0xff)
+		} else {
+			bb[i] = byte(u >> uint32(i*8))
 		}
 	}
 	if b != nil {

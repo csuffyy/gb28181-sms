@@ -28,16 +28,18 @@ var (
 )
 
 type Config struct {
-	RtmpListen  string
-	HttpListen  string
-	HttpsListen string
-	HttpsCrt    string
-	HttpsKey    string
-	HttpsUse    bool
-	LogFile     string
-	LogFileSize int
-	LogFileNum  int
-	LogSaveDay  int
+	RtmpListen   string
+	HttpListen   string
+	HttpsListen  string
+	HttpsCrt     string
+	HttpsKey     string
+	HttpsUse     bool
+	HlsM3u8TsNum uint32
+	HlsTsMaxTime uint32
+	LogFile      string
+	LogFileSize  int
+	LogFileNum   int
+	LogSaveDay   int
 }
 
 func InitConf(file string) {

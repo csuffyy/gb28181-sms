@@ -5,8 +5,12 @@
     "HttpsCrt":"ca/certificate.crt",
     "HttpsKey":"ca/private.key",
     "HttpsUse":false,
+    "===NOTE0===":"live_cctv1/hls/live_cctv1.m3u8",
+    "HlsM3u8TsNum":6,
+    "===NOTE1===":"TsMaxTime单位为秒",
+    "HlsTsMaxTime":5,
     "LogFile":"sms.log",
-    "===NOTE===":"LogFileSize单位为MB,LogFileNum单位为个,LogSaveDay单位为天",
+    "===NOTE2===":"LogFileSize单位为MB,LogFileNum单位为个,LogSaveDay单位为天",
     "LogFileSize":300,
     "LogFileNum":10,
     "LogSaveDay":15

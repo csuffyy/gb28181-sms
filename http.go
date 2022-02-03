@@ -2,9 +2,12 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 )
 
 type Rsps struct {
@@ -23,13 +26,72 @@ func GetRsps(code int, msg string) []byte {
 	return d
 }
 
-func HttpServer(w http.ResponseWriter, r *http.Request) {
-	log.Println("------>>> new http request")
-	log.Println(r.Proto, r.Method, r.URL, r.RemoteAddr, r.Header["Upgrade"])
+func GetVersion(w http.ResponseWriter, r *http.Request) ([]byte, error) {
+	s := fmt.Sprintf("%s %s", AppName, AppVersion)
+	d := GetRsps(200, s)
+	return d, nil
+}
 
-	rsps := GetRsps(200, "ok")
+// GET http://www.domain.com/live/yuankang.flv
+// GET http://www.domain.com/live/yuankang.m3u8
+// GET http://www.domain.com/api/version
+func HttpServer(w http.ResponseWriter, r *http.Request) {
+	log.Println("====== new http request ======")
+	log.Println(r.Proto, r.Method, r.URL, r.RemoteAddr, r.Host)
+
+	var rsps []byte
+	var err error
+
+	if r.Method == "GET" {
+		// HTTP/1.1 GET /api/version 127.0.0.1:63544
+		if strings.Contains(r.URL.String(), "/api/version") {
+			rsps, err = GetVersion(w, r)
+			if err != nil {
+				log.Println(err)
+				goto ERR
+			}
+		} else if strings.Contains(r.URL.String(), ".flv") {
+			GetFlv(w, r)
+			return
+		} else if strings.Contains(r.URL.String(), ".m3u8") {
+			rsps, err = GetM3u8(w, r)
+			if err != nil {
+				log.Println(err)
+				goto ERR
+			}
+		} else if strings.Contains(r.URL.String(), ".ts") {
+			rsps, err = GetTs(w, r)
+			if err != nil {
+				log.Println(err)
+				goto ERR
+			}
+		} else {
+			// HTTP/1.1 GET /favicon.ico
+			err = fmt.Errorf("undefined GET request")
+			goto ERR
+		}
+	} else if r.Method == "POST" {
+		d, err := ioutil.ReadAll(r.Body)
+		if err != nil {
+			log.Println(err)
+			goto ERR
+		}
+		log.Println(string(d))
+
+		err = fmt.Errorf("undefined POST request")
+		goto ERR
+	}
+
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Connection", "Keep-Alive")
+	w.Header().Set("Content-length", strconv.Itoa(len(rsps)))
+	w.Header().Set("Server", AppName)
+	w.Write(rsps)
+	return
+ERR:
+	//w.WriteHeader(500)
+	rsps = GetRsps(500, err.Error())
+	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Content-length", strconv.Itoa(len(rsps)))
 	w.Header().Set("Server", AppName)
 	w.Write(rsps)
