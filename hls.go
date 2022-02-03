@@ -68,18 +68,20 @@ type M3u8 struct {
 }
 
 type HlsInfo struct {
-	M3u8Path   string     // m3u8文件路径, 包含文件名
-	M3u8File   *os.File   // m3u8文件描述符
-	M3u8Data   string     // m3u8内容
-	TsNum      uint32     // m3u8里ts的个数
-	TsFirstSeq uint32     // m3u8里第一个ts的序号
-	TsLastSeq  uint32     // m3u8里最后一个ts的序号
-	TsList     *list.List // 存储ts内容, 双向链表, 删头追尾
-	TsFirstTs  uint32     // ts文件中第一个时间戳
-	TsExtInfo  float64    // ts文件的播放时长
-	TsPath     string     // ts文件路径, 包含文件名
-	TsFile     *os.File   // ts文件描述符
-	TsData     []byte     // ts文件内容(不完整，正在生成)
+	M3u8Path     string     // m3u8文件路径, 包含文件名
+	M3u8File     *os.File   // m3u8文件描述符
+	M3u8Data     string     // m3u8内容
+	TsNum        uint32     // m3u8里ts的个数
+	TsFirstSeq   uint32     // m3u8里第一个ts的序号
+	TsLastSeq    uint32     // m3u8里最后一个ts的序号
+	TsList       *list.List // 存储ts内容, 双向链表, 删头追尾
+	TsFirstTs    uint32     // ts文件中第一个时间戳
+	TsExtInfo    float64    // ts文件的播放时长
+	TsPath       string     // ts文件路径, 包含文件名
+	TsFile       *os.File   // ts文件描述符
+	TsData       []byte     // ts文件内容(不完整，正在生成)
+	VideoCounter uint8      // 4bit, 0x0 - 0xf 循环
+	AudioCounter uint8      // 4bit, 0x0 - 0xf 循环
 }
 
 var TsSeqNum = 0
@@ -301,7 +303,7 @@ func PesCreate(s *Stream, c *Chunk) (*Pes, []byte) {
 		CompositionTime = ByteToUint32(c.MsgData[2:5], BE) // 24bit
 		pts = dts + uint64(CompositionTime*H264ClockFrequency)
 	}
-	s.log.Println(c.DataType, pts, dts, CompositionTime)
+	s.log.Println("c.DataType=%s, pts=%d, dts=%d, CompositionTime=%d", c.DataType, pts, dts, CompositionTime)
 
 	var pes Pes
 	pes.PacketStartCodePrefix = 0x000001
@@ -324,7 +326,7 @@ func PesCreate(s *Stream, c *Chunk) (*Pes, []byte) {
 	pes.FixedValue0 = 0x10
 	pes.PesScramblingControl = 0x0
 	pes.PesPriority = 0x0
-	pes.DataAlignmentIndicator = 0x0
+	pes.DataAlignmentIndicator = 0x1
 	pes.Copyright = 0x0
 	pes.OriginalOrCopy = 0x0
 	pes.Pts = pts
@@ -363,7 +365,7 @@ func PesCreate(s *Stream, c *Chunk) (*Pes, []byte) {
 		pesData[18] = uint8((pes.Dts&0x7F)<<1) | (pes.MarkerBit5 & 0x1)
 		copy(pesData[19:], c.MsgData)
 	}
-	s.log.Printf("6 + 3 + %d + %d = %d", pes.PesHeaderDataLength, len(c.MsgData), l)
+	s.log.Printf("pesLen: 6 + 3 + %d + %d = %d", pes.PesHeaderDataLength, len(c.MsgData), l)
 	return &pes, pesData
 }
 
@@ -468,7 +470,7 @@ func PmtCreate() (*Pmt, []byte) {
 // ts和pat之间有一个字节的分隔符
 // ts和pmt之间有一个字节的分隔符
 // ts和pes之间没有一个字节的分隔符
-func TsPacketCreate0(s *Stream, pid uint16, data []byte) []byte {
+func TsPacketCreate0(s *Stream, pid uint16, data []byte) ([]byte, int) {
 	var th TsHeader
 	th.SyncByte = 0x47
 	th.TransportErrorIndicator = 0x0
@@ -489,30 +491,48 @@ func TsPacketCreate0(s *Stream, pid uint16, data []byte) []byte {
 	// ts和pes之间没有一个字节的分隔符
 	tsData[4] = 0x0
 
-	l := len(data)
-	copy(tsData[5:5+l], data)
-
-	// l = 16, ll = 167
-	ll := 188 - 5 - l
-	s.log.Printf("TsHeaderLen=4, SeparatorLen=1, DataLen=%d, PaddingLen=%d", l, ll)
-
-	for i := 0; i < ll; i++ {
-		tsData[i+5+l] = 0xff
+	dataLen := len(data)
+	freeBuffLen := 188 - 5
+	if dataLen >= freeBuffLen {
+		dataLen = freeBuffLen
+		freeBuffLen = 0
+		copy(tsData[5:5+dataLen], data)
+	} else {
+		copy(tsData[5:5+dataLen], data)
+		freeBuffLen = 188 - 5 - dataLen
+		for i := 0; i < freeBuffLen; i++ {
+			tsData[i+5+dataLen] = 0xff
+		}
 	}
-	s.log.Printf("%x", tsData)
-	return tsData
+
+	//s.log.Printf("%x", tsData)
+	s.log.Printf("TsHeaderLen=4, SeparatorLen=1, DataLen=%d, PaddingLen=%d", dataLen, freeBuffLen)
+	return tsData, dataLen
 }
 
-func TsPacketCreate1(s *Stream, pid uint16, data []byte) []byte {
+func TsPacketCreate1(s *Stream, pusi uint8, pid uint16, data []byte) ([]byte, int) {
 	var th TsHeader
 	th.SyncByte = 0x47
 	th.TransportErrorIndicator = 0x0
-	th.PayloadUnitStartIndicator = 0x1
+	th.PayloadUnitStartIndicator = pusi
 	th.TransportPriority = 0x0
 	th.PID = pid
 	th.TransportScramblingControl = 0x0
 	th.AdaptationFieldControl = 0x1
-	th.ContinuityCounter = 0x3
+	if pid == AudioPid {
+		th.ContinuityCounter = s.AudioCounter
+		s.AudioCounter++
+		if s.AudioCounter > 0xf {
+			s.AudioCounter = 0x0
+		}
+	}
+	if pid == VideoPid {
+		th.ContinuityCounter = s.VideoCounter
+		s.VideoCounter++
+		if s.VideoCounter > 0xf {
+			s.VideoCounter = 0x0
+		}
+	}
 
 	tsData := make([]byte, 188)
 	tsData[0] = th.SyncByte
@@ -520,42 +540,145 @@ func TsPacketCreate1(s *Stream, pid uint16, data []byte) []byte {
 	tsData[2] = uint8(th.PID & 0xff)
 	tsData[3] = (th.TransportScramblingControl&0x3)<<6 | (th.AdaptationFieldControl&0x3)<<4 | (th.ContinuityCounter & 0xf)
 
-	l := len(data)
-	copy(tsData[4:4+l], data)
-
-	ll := 188 - 4 - l
-	s.log.Printf("TsHeaderLen=4, SeparatorLen=1, DataLen=%d, PaddingLen=%d", l, ll)
-
-	for i := 0; i < ll; i++ {
-		tsData[i+4+l] = 0xff
+	dataLen := len(data)
+	freeBuffLen := 188 - 4
+	if dataLen >= freeBuffLen {
+		dataLen = freeBuffLen
+		freeBuffLen = 0
+		copy(tsData[4:4+dataLen], data)
+	} else {
+		copy(tsData[4:4+dataLen], data)
+		freeBuffLen = 188 - 4 - dataLen
+		for i := 0; i < freeBuffLen; i++ {
+			tsData[i+4+dataLen] = 0xff
+		}
 	}
-	s.log.Printf("%x", tsData)
-	return tsData
+
+	//s.log.Printf("%x", tsData)
+	s.log.Printf("TsHeaderLen=4, DataLen=%d, PaddingLen=%d", dataLen, freeBuffLen)
+	return tsData, dataLen
+}
+
+// 33 + 6 + 9 = 48bit, 6Byte
+type Pcr struct {
+	ProgramClockReferenceBase      uint64 // 33bit
+	Reserved                       uint8  // 6bit
+	ProgramClockReferenceExtension uint16 // 9bit
+}
+
+// 8 + 8  = 16bit, 2Byte
+type Adaptation struct {
+	AdaptationFieldLength             uint8 // 8bit
+	DiscontinuityIndicator            uint8 // 1bit
+	RandomAccessIndicator             uint8 // 1bit
+	ElementaryStreamPriorityIndicator uint8 // 1bit
+	PcrFlag                           uint8 // 1bit
+	OpcrFlag                          uint8 // 1bit
+	SplicingPointFlag                 uint8 // 1bit
+	TransportPrivateDataFlag          uint8 // 1bit
+	AdaptationFieldExtensionFlag      uint8 // 1bit
+}
+
+func TsPacketCreate2(s *Stream, pusi uint8, pid uint16, data []byte, pes *Pes) ([]byte, int) {
+	var th TsHeader
+	th.SyncByte = 0x47
+	th.TransportErrorIndicator = 0x0
+	th.PayloadUnitStartIndicator = pusi
+	th.TransportPriority = 0x0
+	th.PID = pid
+	th.TransportScramblingControl = 0x0
+	th.AdaptationFieldControl = 0x3
+	th.ContinuityCounter = s.VideoCounter
+	s.VideoCounter++
+	if s.VideoCounter > 0xf {
+		s.VideoCounter = 0x0
+	}
+
+	var a Adaptation
+	a.AdaptationFieldLength = 0x7
+	a.DiscontinuityIndicator = 0x0
+	a.RandomAccessIndicator = 0x0
+	a.ElementaryStreamPriorityIndicator = 0x0
+	a.PcrFlag = 0x1
+	a.OpcrFlag = 0x0
+	a.SplicingPointFlag = 0x0
+	a.TransportPrivateDataFlag = 0x0
+	a.AdaptationFieldExtensionFlag = 0x0
+
+	var pcr Pcr
+	pcr.ProgramClockReferenceBase = 0
+	pcr.Reserved = 0
+	pcr.ProgramClockReferenceExtension = 0
+
+	tsData := make([]byte, 188)
+	tsData[0] = th.SyncByte
+	tsData[1] = (th.TransportErrorIndicator&0x1)<<7 | (th.PayloadUnitStartIndicator&0x1)<<6 | (th.TransportPriority&0x1)<<5 | uint8((th.PID&0x1f00)>>8)
+	tsData[2] = uint8(th.PID & 0xff)
+	tsData[3] = (th.TransportScramblingControl&0x3)<<6 | (th.AdaptationFieldControl&0x3)<<4 | (th.ContinuityCounter & 0xf)
+
+	tsData[4] = a.AdaptationFieldLength
+	tsData[5] = (a.DiscontinuityIndicator&0x1)<<7 | (a.RandomAccessIndicator&0x1)<<6 | (a.ElementaryStreamPriorityIndicator&0x1)<<5 | (a.PcrFlag&0x1)<<4 | (a.OpcrFlag&0x1)<<3 | (a.SplicingPointFlag&0x1)<<2 | (a.TransportPrivateDataFlag&0x1)<<1 | (a.AdaptationFieldExtensionFlag & 0x1)
+
+	// pcr 和 dts是什么关系???
+	tsData[6] = uint8(pes.Dts >> 25)
+	tsData[7] = uint8((pes.Dts >> 17) & 0xff)
+	tsData[8] = uint8((pes.Dts >> 9) & 0xff)
+	tsData[9] = uint8((pes.Dts >> 1) & 0xff)
+	tsData[10] = uint8(((pes.Dts & 0x1) << 7) | 0x7e) // ???
+	tsData[11] = 0x00
+
+	dataLen := len(data)
+	freeBuffLen := 188 - 12
+	if dataLen >= freeBuffLen {
+		dataLen = freeBuffLen
+		freeBuffLen = 0
+		copy(tsData[12:12+dataLen], data)
+	} else {
+		copy(tsData[12:12+dataLen], data)
+		freeBuffLen = 188 - 12 - dataLen
+		for i := 0; i < freeBuffLen; i++ {
+			tsData[i+12+dataLen] = 0xff
+		}
+	}
+
+	//s.log.Printf("%x", tsData)
+	s.log.Printf("TsHeaderLen=4, Adaptation=8, DataLen=%d, PaddingLen=%d", dataLen, freeBuffLen)
+	return tsData, dataLen
 }
 
 func TsFileAppend(s *Stream, c *Chunk) {
 	pes, pesData := PesCreate(s, c)
 	s.log.Printf("pes.Pts=%d pes.Dts=%d, pesLen=%d", pes.Pts, pes.Dts, len(pesData))
 
-	l := len(pesData)
-	//s.log.Printf("pesDataLen = %d", l)
-	n := uint32(math.Ceil(float64(l) / 184)) // 向上取整
-	m := uint32(l % 184)                     // 求余数
-	var i uint32
-	for i = 0; i < n; i++ {
-		ss := 184 * i // [0:184] [184:368] ...
-		ee := 184 * (i + 1)
-		if i+1 == n && m != 0 {
-			ee = ss + m
+	pesDataLen := len(pesData)
+	var consumeLen, start int
+	var pusi uint8 = 0x1 // tsHeader.PayloadUnitStartIndicator
+	for {
+		if c.MsgTypeId == MsgTypeIdAudio {
+			s.TsData, consumeLen = TsPacketCreate1(s, pusi, AudioPid, pesData[start:])
 		}
-		s.log.Printf("pesDatalen=%d, tsPacketNum=%d, tsPacketSeq=%d, data[%d:%d]", l, n, i, ss, ee)
-		s.TsData = TsPacketCreate1(s, PatPid, pesData[ss:ee])
+		if c.MsgTypeId == MsgTypeIdVideo {
+			if c.DataType == "VideoHeader" || c.DataType == "VideoKeyFrame" {
+				// 关键帧要加 pcr
+				s.TsData, consumeLen = TsPacketCreate2(s, pusi, VideoPid, pesData[start:], pes)
+			} else {
+				s.TsData, consumeLen = TsPacketCreate1(s, pusi, VideoPid, pesData[start:])
+			}
+		}
 		// 写入文件
 		_, err := s.TsFile.Write(s.TsData)
 		if err != nil {
 			s.log.Printf("Write ts fail, %s", err)
 			return
 		}
+
+		start += consumeLen
+		if start >= pesDataLen {
+			s.log.Printf("pesDataLen=%d, start=%d", pesDataLen, start)
+			break
+		}
+		pusi = 0x0
+		s.log.Printf("pesDataLen=%d, start=%d, consumeLen=%d", pesDataLen, start, consumeLen)
 	}
 }
 
@@ -579,7 +702,7 @@ func TsFileCreate(s *Stream, c *Chunk) {
 	}
 
 	_, patData := PatCreate()
-	s.TsData = TsPacketCreate0(s, PatPid, patData)
+	s.TsData, _ = TsPacketCreate0(s, PatPid, patData)
 	// 写入文件
 	_, err = s.TsFile.Write(s.TsData)
 	if err != nil {
@@ -588,7 +711,7 @@ func TsFileCreate(s *Stream, c *Chunk) {
 	}
 
 	_, pmtData := PmtCreate()
-	s.TsData = TsPacketCreate0(s, PmtPid, pmtData)
+	s.TsData, _ = TsPacketCreate0(s, PmtPid, pmtData)
 	// 写入文件
 	_, err = s.TsFile.Write(s.TsData)
 	if err != nil {
@@ -612,12 +735,14 @@ func TsCreate(s *Stream, c *Chunk) bool {
 	// rtmp里的timestamp单位是毫秒, 除以1000变为秒
 	// dv is d-value 表示 差值
 	s.TsExtInfo = math.Floor(float64(c.Timestamp-s.TsFirstTs) / 1000)
-	s.log.Printf("%#v, %#v, %#v, %#v", c.Timestamp, s.TsFirstTs, s.TsExtInfo, conf.HlsTsMaxTime)
+	s.log.Printf("c.Timestamp=%d, s.TsFirstTs=%d, s.TsExtInfo=%f, conf.HlsTsMaxTime=%f", c.Timestamp, s.TsFirstTs, s.TsExtInfo, conf.HlsTsMaxTime)
 	var tf bool
 	if s.TsPath == "" || uint32(s.TsExtInfo) >= conf.HlsTsMaxTime {
+		s.log.Println("--->> TsFileCreate()")
 		TsFileCreate(s, c) // 新建TsFile, 并写入
 		tf = true
 	} else {
+		s.log.Println("--->> TsFileAppend()")
 		TsFileAppend(s, c) // 可以写入当前TsFile
 		tf = false
 	}
@@ -660,16 +785,21 @@ func M3u8Update(s *Stream, c *Chunk) {
 }
 
 func HlsCreator(s *Stream) {
+	var i uint32 = 0
 	for {
 		c, ok := <-s.HlsChan
 		if !ok {
 			s.log.Println("HlsCreator close")
 			return
 		}
-		s.log.Printf("fmt=%d, csid=%d, timestamp=%d, MsgLength=%d, MsgTypeId=%d, DataType=%s", c.Fmt, c.Csid, c.Timestamp, c.MsgLength, c.MsgTypeId, c.DataType)
+		s.log.Printf("-------------------->> chunk %d", i)
+		i++
+		s.log.Printf("===>> fmt=%d, csid=%d, timestamp=%d, MsgLength=%d, MsgTypeId=%d, DataType=%s", c.Fmt, c.Csid, c.Timestamp, c.MsgLength, c.MsgTypeId, c.DataType)
 
+		// DataType    string
 		// "Metadata", "VideoHeader", "AudioHeader",
-		if c.DataType == "Metadata" {
+		// "VideoKeyFrame", "VideoInterFrame", "AudioAacFrame"
+		if c.DataType == "Metadata" || c.DataType == "VideoHeader" || c.DataType == "AudioHeader" {
 			continue
 		}
 
