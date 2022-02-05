@@ -470,7 +470,7 @@ func AmfConnectResponse(s *Stream, c *Chunk) error {
 	s.log.Println(rsps, info)
 
 	d, _ = AmfMarshal(s, "_result", 1, rsps, info) // 结构化转序列化
-	s.log.Println(d)
+	//s.log.Println(d)
 
 	rc = CreateMessage(MsgTypeIdCmdAmf0, uint32(len(d)), d)
 	rc.Csid = c.Csid
@@ -533,7 +533,7 @@ func AmfPublishResponse(s *Stream, c *Chunk) error {
 	info["description"] = "Start publising."
 
 	d, _ := AmfMarshal(s, "onStatus", 0, nil, info) // 结构化转序列化
-	s.log.Println(d)
+	//s.log.Println(d)
 
 	rc := CreateMessage(MsgTypeIdCmdAmf0, uint32(len(d)), d)
 	rc.Csid = c.Csid

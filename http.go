@@ -59,6 +59,8 @@ func HttpServer(w http.ResponseWriter, r *http.Request) {
 				log.Println(err)
 				goto ERR
 			}
+			// safari地址栏输入播放地址  必须有这个 才能播放
+			w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
 		} else if strings.Contains(r.URL.String(), ".ts") {
 			rsps, err = GetTs(w, r)
 			if err != nil {

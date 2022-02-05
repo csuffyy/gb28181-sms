@@ -8,7 +8,6 @@ import (
 	"net"
 	"net/http"
 	"strconv"
-	"strings"
 )
 
 type FlvPlayInfo struct {
@@ -20,18 +19,6 @@ type FlvPlayInfo struct {
 /**********************************************************/
 /* for http
 /**********************************************************/
-func GetAppStream(str string) (string, string) {
-	s := strings.Split(str, "/")
-	if len(s) < 3 {
-		return "", ""
-	}
-	ss := strings.Split(s[2], ".")
-	if len(ss) < 1 {
-		return "", ""
-	}
-	return s[1], ss[0]
-}
-
 // 0xff + len(1 Byte) + data(len Byte)
 func FlvRecv(fpi FlvPlayInfo) (net.Conn, error) {
 	data, err := json.Marshal(fpi)
@@ -97,7 +84,7 @@ func FlvSend(c net.Conn, w http.ResponseWriter) {
 // GET http://www.domain.com/live/yuankang.flv
 func GetFlv(w http.ResponseWriter, r *http.Request) {
 	var fpi FlvPlayInfo
-	fpi.App, fpi.Stream = GetAppStream(r.URL.String())
+	fpi.App, fpi.Stream, _ = GetPlayInfo(r.URL.String())
 	fpi.Client = r.RemoteAddr
 	log.Printf("%#v", fpi)
 

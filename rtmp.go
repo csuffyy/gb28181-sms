@@ -323,7 +323,7 @@ type Chunk struct {
 	Timestamp   uint32 // 24bit
 	TimeExted   bool   // 8bit
 	TimeDelta   uint32 // 24bit
-	MsgLength   uint32 // 24bit
+	MsgLength   uint32 // 24bit, MsgData的长度
 	MsgTypeId   uint32 // 8bit
 	MsgStreamId uint32 // 32bit, 小端字节序
 	MsgData     []byte
@@ -811,9 +811,9 @@ func RtmpPublisher(s *Stream) {
 		// 11 AudioAacFrame 534 181
 		// 12 AudioAacFrame 443 205
 		// 测试使用, 控制接收 多少个Message
-		if i == 10 {
-			s.Conn.Close()
-			break
+		if i == 100 {
+			//s.Conn.Close()
+			//break
 		}
 		i++
 	}
@@ -1021,6 +1021,13 @@ func VideoHandle(s *Stream, c *Chunk) error {
 			ByteToUint16(c.MsgData[EndPos+1:EndPos+3], BE) // 16bit, 0x0004
 		AvcC.PpsData = c.MsgData[EndPos+3:] // 4Byte
 		s.log.Printf("%#v", AvcC)
+		//sps 为1个，长度为 0x1c
+		//0x67, 0x4d, 0x40, 0x1f, 0xe8, 0x80, 0x28, 0x02, 0xdd, 0x80,
+		//0xb5, 0x01, 0x01, 0x01, 0x40, 0x00, 0x00, 0x03, 0x00, 0x40,
+		//0x00, 0x00, 0x0c, 0x03, 0xc6, 0x0c, 0x44, 0x80
+		//pps 为1个，长度为 0x4
+		//0x68, 0xeb, 0xef, 0x20
+		// sps 和 pps 的解析???
 
 		s.GopCache.VideoHeader = c
 	} else if AVCPacketType == 1 {
@@ -1028,6 +1035,14 @@ func VideoHandle(s *Stream, c *Chunk) error {
 		s.log.Println("This frame is AVC NALU")
 		c.Fmt = c.FmtFirst
 		s.GopCache.MediaData.PushBack(c)
+		//naluLen := ByteToUint32(c.MsgData[5:9], BE)
+		//s.log.Printf("naluLen=%d, Data=%#v", naluLen, c.MsgData)
+		// 前5个字节上面已经处理，从第6个字节开始
+		// 0x00, 0x00, 0x60, 0x50 为naluLen的值
+		// iframe naluLen=24656
+		//0x17, 0x01, 0x00, 0x00, 0x2a, 0x00, 0x00, 0x60, 0x50, 0x65,
+		//0x88, 0x84, 0x00, 0xff, 0xfe, 0x9e, 0xbb, 0xe0, 0x53, 0x31,
+		//0x60, 0x4f, 0xb4, 0x1f, 0xe0, 0x63, 0x6f, 0xea, 0xe7, 0x5f,
 
 		//KeyFrameNum	1	2	3	4	关键帧个数
 		//CacheNum		0	1	2	3	Gop个数 为1的时候要开始删Gop了
@@ -1049,6 +1064,11 @@ func VideoHandle(s *Stream, c *Chunk) error {
 	return nil
 }
 
+//See ISO 14496-15, 5.2.4.1 for AVCDecoderConfigurationRecord
+//ISO/IEC 14496-15:2019 要花钱购买
+//https://www.iso.org/standard/74429.html
+// SPS defined in ISO/IEC 14496-10
+// PPS defined in ISO/IEC 14496-10
 type AVCDecoderConfigurationRecord struct {
 	ConfigurationVersion uint8  // 8bit, 0x01
 	AVCProfileIndication uint8  // 8bit, 0x4d, 0100 1101
@@ -1136,10 +1156,30 @@ func AudioHandle(s *Stream, c *Chunk) error {
 		c.DataType = "AudioAacFrame"
 		c.Fmt = c.FmtFirst
 		s.GopCache.MediaData.PushBack(c)
+		//s.log.Printf("%x", c.MsgData)
 	}
 	return nil
 }
 
+//AudioSpecificConfig is explained in ISO 14496-3, P52
+//ObjectType      uint8 // 5bit
+// 2	AAC-LC
+// 5	SBR
+// 29	PS
+//SamplingIdx     uint8 // 4bit
+// 0	96000
+// 1	88200
+// 3	64000
+// 4	44100
+// 5	32000
+// 6	24000
+// 7	22050
+// 8	16000
+//ChannelNum      uint8 // 4bit
+// 1	单声道
+// 2	双声道
+//FrameLenFlag    uint8 // 1bit
+// 0	1024个采样点为一帧
 type AudioSpecificConfig struct {
 	ObjectType      uint8 // 5bit
 	SamplingIdx     uint8 // 4bit
