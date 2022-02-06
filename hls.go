@@ -110,7 +110,7 @@ func PrepareSpsPpsData(s *Stream, c *Chunk) {
 // 366-2=364, 371-264=7, 7字节adts  0x173 = 371
 type Adts struct {
 	Syncword                     uint16 // 12bit, 固定值0xfff
-	Id                           uint8  // 1bit, MPEG Version: 0 is MPEG-4, 1 is MPEG-2
+	Id                           uint8  // 1bit, 固定值0x1, MPEG Version: 0 is MPEG-4, 1 is MPEG-2
 	Layer                        uint8  // 2bit, 固定值00
 	ProtectionAbsent             uint8  // 1bit, 0表示有CRC校验, 1表示没有CRC校验
 	ProfileObjectType            uint8  // 2bit
@@ -176,7 +176,30 @@ func PrepareAdtsData(s *Stream, c *Chunk) {
 	s.log.Printf("%x", s.AdtsData)
 }
 
-// size = 7字节adts头 + aac数据长度
+func ParseAdtsData(s *Stream) Adts {
+	var adts Adts
+	data := s.AdtsData
+	adts.Syncword = uint16(data[0])<<4 | uint16(data[1])>>4
+	adts.Id = (data[1] >> 3) & 0x1
+	adts.Layer = (data[1] >> 1) & 0x3
+	adts.ProtectionAbsent = data[1] & 0x1
+	adts.ProfileObjectType = (data[2] >> 6) & 0x3
+	adts.SamplingFrequencyIndex = (data[2] >> 2) & 0xf
+	adts.PrivateBit = (data[2] >> 1) & 0x1
+	adts.ChannelConfiguration = (data[2]&0x1)<<2 | (data[3]>>6)&0x3
+	adts.OriginalCopy = (data[3] >> 5) & 0x1
+	adts.Home = (data[3] >> 4) & 0x1
+	adts.CopyrightIdentificationBit = (data[3] >> 3) & 0x1
+	adts.CopyrightIdentificationStart = (data[3] >> 2) & 0x1
+	adts.AacFrameLength = (uint16(data[3])&0x3)<<11 | uint16(data[4])<<3 | (uint16(data[5])>>5)&0x7
+	adts.AdtsBufferFullness = (uint16(data[5])&0x1f)<<6 | (uint16(data[6])>>2)&0x3f
+	adts.NumberOfRawDataBlocksInFrame = data[6] & 0x3
+	s.log.Printf("%#v", adts)
+	return adts
+}
+
+// size = adts头(7字节) + aac数据长度
+// 函数A 把[]byte 传给函数B, B修改后 A里的值也会变
 func SetAdtsLength(d []byte, size uint16) {
 	d[3] = (d[3] & 0xfc) | uint8((size>>11)&0x2) // 最右2bit
 	d[4] = (d[4] & 0x00) | uint8((size>>3)&0xff) // 8bit
@@ -208,6 +231,7 @@ func HlsCreator(s *Stream) {
 			continue
 		case "AudioHeader":
 			PrepareAdtsData(s, c)
+			ParseAdtsData(s)
 			continue
 		}
 
@@ -269,6 +293,9 @@ type Pcr struct {
 // TsPacketCreate() 只有tsHeader + 184字节数据
 // 返回tsData 和 写入tsData的字节数(也就是data数据消耗了多少)
 func TsPacketCreate(s *Stream, pid uint16, data []byte) ([]byte, int) {
+	dataLen := len(data)
+	freeBuffLen := 188 - 4
+
 	var th TsHeader
 	th.SyncByte = 0x47
 	th.TransportErrorIndicator = 0x0
@@ -277,6 +304,9 @@ func TsPacketCreate(s *Stream, pid uint16, data []byte) ([]byte, int) {
 	th.PID = pid
 	th.TransportScramblingControl = 0x0
 	th.AdaptationFieldControl = 0x1
+	if dataLen < freeBuffLen {
+		th.AdaptationFieldControl = 0x3
+	}
 	if pid == AudioPid {
 		th.ContinuityCounter = s.AudioCounter
 		s.AudioCounter++
@@ -298,18 +328,20 @@ func TsPacketCreate(s *Stream, pid uint16, data []byte) ([]byte, int) {
 	tsData[2] = uint8(th.PID & 0xff)
 	tsData[3] = (th.TransportScramblingControl&0x3)<<6 | (th.AdaptationFieldControl&0x3)<<4 | (th.ContinuityCounter & 0xf)
 
-	dataLen := len(data)
-	freeBuffLen := 188 - 4
 	if dataLen >= freeBuffLen {
 		dataLen = freeBuffLen
 		copy(tsData[4:4+dataLen], data)
 		freeBuffLen = 0
 	} else {
-		copy(tsData[4:4+dataLen], data)
-		freeBuffLen = 188 - 4 - dataLen
-		for i := 0; i < freeBuffLen; i++ {
-			tsData[i+4+dataLen] = 0xff
+		// 添加 adaptation(2字节) 填充 0xff
+		// 188 = 4 + 2 + padLen + dataLen
+		padLen := 188 - 4 - 2 - dataLen
+		tsData[4] = uint8(padLen) + 1
+		tsData[5] = 0x0
+		for i := 0; i < padLen; i++ {
+			tsData[6+i] = 0xff
 		}
+		copy(tsData[6+padLen:], data)
 	}
 	return tsData, dataLen
 }
@@ -574,6 +606,7 @@ func TsFileAppendKeyFrame(s *Stream, c *Chunk) {
 func TsFileAppendInterFrame(s *Stream, c *Chunk) {
 	_, pesHeaderData := PesHeaderCreate(s, c)
 	pesData := PesDataCreateInterFrame(s, c, pesHeaderData)
+	//pesData := PesDataCreateKeyFrame(s, c, pesHeaderData)
 
 	var pesDataLen = len(pesData)
 	//SetPesPakcetLength(pesData, uint16(pesDataLen)-6)
@@ -608,14 +641,16 @@ func TsFileAppendInterFrame(s *Stream, c *Chunk) {
 func TsFileAppendAacFrame(s *Stream, c *Chunk) {
 	_, pesHeaderData := PesHeaderCreate(s, c)
 	pesData := PesDataCreateAacFrame(s, c, pesHeaderData)
+	//s.log.Printf(">>> %x", pesData)
 
 	var pesDataLen = len(pesData)
-	//SetPesPakcetLength(pesData, uint16(pesDataLen)-6)
+	SetPesPakcetLength(pesData, uint16(pesDataLen)-6)
 
 	var consumeLen, start int
 	s.TsData, consumeLen = TsPacketCreateAacFrame(s, AudioPid, pesData[start:])
 	start += consumeLen
 
+	//s.log.Printf(">>> %x", s.TsData)
 	_, err := s.TsFile.Write(s.TsData)
 	if err != nil {
 		s.log.Printf("Write ts fail, %s", err)
@@ -626,6 +661,7 @@ func TsFileAppendAacFrame(s *Stream, c *Chunk) {
 		s.TsData, consumeLen = TsPacketCreate(s, AudioPid, pesData[start:])
 		start += consumeLen
 
+		//s.log.Printf(">>> %x", s.TsData)
 		_, err := s.TsFile.Write(s.TsData)
 		if err != nil {
 			s.log.Printf("Write ts fail, %s", err)
@@ -887,7 +923,6 @@ func PesDataCreateInterFrame(s *Stream, c *Chunk, phd []byte) []byte {
 func PesDataCreateAacFrame(s *Stream, c *Chunk, phd []byte) []byte {
 	pesHeaderDataLen := len(phd)
 	MsgDataLen := int(c.MsgLength) - 2
-	s.log.Printf("MsgDataLen=%d", MsgDataLen)
 	dataLen := pesHeaderDataLen + 7 + MsgDataLen
 	data := make([]byte, dataLen)
 
@@ -896,11 +931,9 @@ func PesDataCreateAacFrame(s *Stream, c *Chunk, phd []byte) []byte {
 	copy(data[ss:ee], phd)
 	ss = ee
 	ee += 7
-	//SetAdtsLength(s.AdtsData, uint16(7+MsgDataLen))
-	size := uint16(7 + MsgDataLen)
-	s.AdtsData[3] = (s.AdtsData[3] & 0xfc) | uint8((size>>11)&0x3) // 最右2bit
-	s.AdtsData[4] = (s.AdtsData[4] & 0x00) | uint8((size>>3)&0xff) // 8bit
-	s.AdtsData[5] = (s.AdtsData[5] & 0x1f) | uint8((size&0x7)<<5)  // 最左3bit
+	// 函数A 把[]byte 传给函数B, B修改后 A里的值也会变
+	SetAdtsLength(s.AdtsData, uint16(7+MsgDataLen))
+	ParseAdtsData(s)
 	copy(data[ss:ee], s.AdtsData)
 	ss = ee
 	ee += MsgDataLen
@@ -920,10 +953,10 @@ type PatProgram struct {
 
 // 3 + 5 + 4 + 4 = 16byte
 type Pat struct {
-	TableId                uint8  // 8bit, 3byte
-	SectionSyntaxIndicator uint8  // 1bit
-	Zero                   uint8  // 1bit
-	Reserved0              uint8  // 2bit
+	TableId                uint8  // 8bit, 固定值0x00, 3byte
+	SectionSyntaxIndicator uint8  // 1bit, 固定值0x1
+	Zero                   uint8  // 1bit, 0x0
+	Reserved0              uint8  // 2bit, 0x3
 	SectionLength          uint16 // 12bit, 5byte
 	TransportStreamId      uint16 // 16bit
 	Reserved1              uint8  // 2bit
@@ -950,7 +983,7 @@ func PatCreate() (*Pat, []byte) {
 	pat.CurrentNextIndicator = 0x1
 	pat.SectionNumber = 0x0
 	pat.LastSectionNumber = 0x0
-	pat.ProgramNumber = 1
+	pat.ProgramNumber = 0x1
 	pat.Reserved2 = 0x3
 	pat.PID = PmtPid
 	pat.CRC32 = 0
@@ -988,8 +1021,8 @@ type PmtStream struct {
 
 // 3 + 9 + 5*2 + 4 = 26byte
 type Pmt struct {
-	TableId                uint8  // 8bit, 3byte
-	SectionSyntaxIndicator uint8  // 1bit
+	TableId                uint8  // 8bit, 固定值0x02, 3byte
+	SectionSyntaxIndicator uint8  // 1bit, 固定值0x1
 	Zero                   uint8  // 1bit
 	Reserved0              uint8  // 2bit
 	SectionLength          uint16 // 12bit, 9byte
@@ -1021,7 +1054,7 @@ func PmtCreate() (*Pmt, []byte) {
 	pmt.SectionNumber = 0x0
 	pmt.LastSectionNumber = 0x0
 	pmt.Reserved2 = 0x7
-	pmt.PcrPID = 0x101
+	pmt.PcrPID = 0x101 // ???
 	pmt.Reserved3 = 0xf
 	pmt.ProgramInfoLength = 0x0
 	pmt.PmtStream = make([]PmtStream, 2)
@@ -1188,6 +1221,55 @@ type TsInfo struct {
 }
 
 func M3u8Update(s *Stream, c *Chunk) {
+	// s.TsNum 初始值为0, conf.HlsM3u8TsNum 通常为6
+	if s.TsNum == uint32(conf.HlsM3u8TsNum) {
+		e := s.TsList.Front()
+		ti := (e.Value).(TsInfo)
+		os.Remove(ti.TsFilepath)
+		s.TsList.Remove(e)
+		s.TsNum--
+		s.TsFirstSeq++
+	}
+	tiStr := fmt.Sprintf(m3u8Body, s.TsExtInfo, path.Base(s.TsPath))
+	ti := TsInfo{tiStr, s.TsExtInfo, s.TsPath}
+	s.TsList.PushBack(ti)
+	s.TsNum++
+
+	s.M3u8Data = fmt.Sprintf(m3u8Head, conf.HlsTsMaxTime, s.TsFirstSeq)
+
+	var tis string
+	for e := s.TsList.Front(); e != nil; e = e.Next() {
+		ti = (e.Value).(TsInfo)
+		tis = fmt.Sprintf("%s\n%s", tis, ti.TsInfoStr)
+	}
+	s.M3u8Data = fmt.Sprintf("%s%s", s.M3u8Data, tis)
+	//s.log.Println(s.M3u8Data)
+
+	// 打开文件
+	var err error
+	if s.M3u8File == nil {
+		s.M3u8File, err = os.OpenFile(s.M3u8Path, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0644)
+		if err != nil {
+			log.Println(err)
+			return
+		}
+	}
+	// 写入文件
+	_, err = s.M3u8File.WriteString(s.M3u8Data)
+	if err != nil {
+		s.log.Printf("Write %s fail, %s", s.M3u8Path, err)
+		return
+	}
+	// 关闭文件
+	err = s.M3u8File.Close()
+	if err != nil {
+		log.Println(err)
+		return
+	}
+	s.M3u8File = nil
+}
+
+func M3u8Update0(s *Stream, c *Chunk) {
 	// s.TsNum 初始值为0, conf.HlsM3u8TsNum 通常为6
 	if s.TsNum == uint32(conf.HlsM3u8TsNum) {
 		e := s.TsList.Front()
