@@ -1067,8 +1067,10 @@ func VideoHandle(s *Stream, c *Chunk) error {
 //See ISO 14496-15, 5.2.4.1 for AVCDecoderConfigurationRecord
 //ISO/IEC 14496-15:2019 要花钱购买
 //https://www.iso.org/standard/74429.html
-// SPS defined in ISO/IEC 14496-10
+// SPS defined in ISO/IEC 14496-10, 位于7.3.2.1.1
 // PPS defined in ISO/IEC 14496-10
+// AVCDecoderConfigurationRecord 就是AVC sequence header
+// AVCDecoderConfigurationRecord在FLV文件中一般情况也是出现1次，也就是第一个video tag
 type AVCDecoderConfigurationRecord struct {
 	ConfigurationVersion uint8  // 8bit, 0x01
 	AVCProfileIndication uint8  // 8bit, 0x4d, 0100 1101
@@ -1083,6 +1085,24 @@ type AVCDecoderConfigurationRecord struct {
 	NumOsPps             uint8  // 8bit, 0x01
 	PpsSize              uint16 // 16bit, 0x0004
 	PpsData              []byte // 4Byte
+}
+
+//ProfileIdc         uint8 // 8bit
+// 44	CAVLC 4:4:4 Intra
+// 66	Baseline
+// 77	Main
+// 88	Extended
+// ...
+type Sps struct { // ???
+	ProfileIdc         uint8 // 8bit
+	ConstraintSet0Flag uint8 // 1bit
+	//...
+	ConstraintSet5Flag uint8 // 1bit
+	ReservedZero2bits  uint8 // 2bit
+	//...
+}
+
+type Pps struct { // ???
 }
 
 // >>> SoundFormat <<<

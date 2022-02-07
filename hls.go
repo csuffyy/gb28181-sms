@@ -42,18 +42,9 @@ type HlsInfo struct {
 }
 
 /**********************************************************/
-/* rtmp流如何生成ts
-/**********************************************************/
-// 1 rtmp里的Metadata, ts不需要???
-// 2 rtmp里的VideoHeader里有sps和pps, ts需要 放到关键帧前面, sps和pps前面要加 nalu标识0x00000001
-// 3 rtmp里的视频数据是es(h264)裸流, ts要封装成pes, 数据前面要加 nalu标识0x00000001
-// 4 rtmp里的AudioHeader里有音频流相关的信息, ts需要用它来生成adts
-// 5 rtmp里的音频数据是es(aac)裸流，ts要封装成adts
-// 6 tsFile是有很多个tsPakcet组成的，tsPacket的固定大小是188字节
-
-/**********************************************************/
 /* tsFile里 tsPacket的顺序和结构
 /**********************************************************/
+// rtmp流如何生成ts? 详见 notes/tsFormat.md (必看)
 // 第1个tsPacket内容为: tsHeader + 0x00 + pat
 // 第2个tsPacket内容为: tsHeader + 0x00 + pmt
 // *** 每个关键帧都要有sps和pps
@@ -67,6 +58,20 @@ type HlsInfo struct {
 // 第481个tsPacket内容为: tsHeader + pesHeader + adts + aacFrame
 // 第482个tsPacket内容为: tsHeader + aacFrame
 // ...
+
+// 0x00000001 或 0x000001 是NALU单元的开始码
+//NalUnitType      uint8 // 5bit
+// 1, 非关键帧
+// 5, 关键帧
+// 6, SEI 补充增强信息
+// 7, SPS 序列参数集
+// 8, PPS 图像参数集
+// 9, 分隔符, 后跟1字节 0xf0
+type NaluHeader struct {
+	ForbiddenZeroBit uint8 // 1bit
+	NalRefIdc        uint8 // 2bit
+	NalUnitType      uint8 // 5bit
+}
 
 /**********************************************************/
 /* prepare SpsPpsData and AdtsData
@@ -102,21 +107,44 @@ func PrepareSpsPpsData(s *Stream, c *Chunk) {
 	s.log.Printf("%x", s.SpsPpsData)
 }
 
-//ISO 14496-3, P122
-//28bit固定头 + 28bit可变头 = 56bit, 7byte
 // FF F9 50 80 2E 7F FC
 // 11111111 11111001 01010000 10000000 00101110 01111111 11111100
 // fff 1 00 1 01 0100 0 010 0 0 0 0 0000101110011 11111111111 00
 // 366-2=364, 371-264=7, 7字节adts  0x173 = 371
+//ProfileObjectType            uint8  // 2bit
+// 0	Main profile
+// 1	Low Complexity profile(LC)
+// 2	Scalable Sampling Rate profile(SSR)
+// 3	(reserved)
+//SamplingFrequencyIndex       uint8  // 4bit, 使用的采样率下标
+// 0: 96000 Hz
+// 1: 88200 Hz
+// 2: 64000 Hz
+// 3: 48000 Hz
+// 4: 44100 Hz
+// 5: 32000 Hz
+// 6: 24000 Hz
+// 7: 22050 Hz
+// 8: 16000 Hz
+// 9: 12000 Hz
+// 10: 11025 Hz
+// 11: 8000 Hz
+// 12: 7350 Hz
+// 13: Reserved
+// 14: Reserved
+// 15: frequency is written explictly
+// ADTS 定义在 ISO 14496-3, P122
+// 固定头信息 + 可变头信息(home之后，不包括home)
+//28bit固定头 + 28bit可变头 = 56bit, 7byte
 type Adts struct {
 	Syncword                     uint16 // 12bit, 固定值0xfff
 	Id                           uint8  // 1bit, 固定值0x1, MPEG Version: 0 is MPEG-4, 1 is MPEG-2
 	Layer                        uint8  // 2bit, 固定值00
 	ProtectionAbsent             uint8  // 1bit, 0表示有CRC校验, 1表示没有CRC校验
-	ProfileObjectType            uint8  // 2bit
-	SamplingFrequencyIndex       uint8  // 4bit
-	PrivateBit                   uint8  // 1bit
-	ChannelConfiguration         uint8  // 3bit
+	ProfileObjectType            uint8  // 2bit, 表示使用哪个级别的AAC，有些芯片只支持AAC LC
+	SamplingFrequencyIndex       uint8  // 4bit, 使用的采样率下标
+	PrivateBit                   uint8  // 1bit, 0x0
+	ChannelConfiguration         uint8  // 3bit, 表示声道数
 	OriginalCopy                 uint8  // 1bit
 	Home                         uint8  // 1bit
 	CopyrightIdentificationBit   uint8  // 1bit
@@ -247,23 +275,23 @@ func HlsCreator(s *Stream) {
 /**********************************************************/
 //===> PID
 //0x0000	表示PAT
-//0x0001  表示CAT
+//0x0001	表示CAT
 //0x1fff	表示空包
 //===> AdaptationFieldControl
-//00：是保留值
-//01：负载中只有有效载荷
-//10：负载中只有自适应字段
-//11：先有自适应字段，再有有效载荷
+//0x0	是保留值
+//0x1	无调整字段，仅含有效负载
+//0x2	仅含调整字段，无有效负载
+//0x3	调整字段后含有效负载
 // 8 + 3 + 13 + 2 + 2 + 4 = 4byte
 type TsHeader struct {
-	SyncByte                   uint8  // 8bit, 同步字节 固定为0x47
-	TransportErrorIndicator    uint8  // 1bit, 传输错误标志
+	SyncByte                   uint8  // 8bit, 同步字节 固定值0x47, 后面的数据是不会出现0x47的
+	TransportErrorIndicator    uint8  // 1bit, 传输错误标志, 一般传输错误的话就不会处理这个包了
 	PayloadUnitStartIndicator  uint8  // 1bit, 负载单元开始标志
-	TransportPriority          uint8  // 1bit, 传输优先级
-	PID                        uint16 // 13bit, TS包负载的数据类型
-	TransportScramblingControl uint8  // 2bit, 传输加扰控制
+	TransportPriority          uint8  // 1bit, 传输优先级, 1表示高优先级
+	PID                        uint16 // 13bit, TS包的数据类型
+	TransportScramblingControl uint8  // 2bit, 传输加扰控制, 00表示未加密
 	AdaptationFieldControl     uint8  // 2bit, 适应域控制
-	ContinuityCounter          uint8  // 4bit, 连续计数器
+	ContinuityCounter          uint8  // 4bit, 连续计数器, 0x0-0xf循环
 }
 
 // 8 + 8  = 16bit, 2Byte
@@ -953,17 +981,17 @@ type PatProgram struct {
 
 // 3 + 5 + 4 + 4 = 16byte
 type Pat struct {
-	TableId                uint8  // 8bit, 固定值0x00, 3byte
+	TableId                uint8  // 8bit, 固定值0x00, 表示是PAT
 	SectionSyntaxIndicator uint8  // 1bit, 固定值0x1
 	Zero                   uint8  // 1bit, 0x0
 	Reserved0              uint8  // 2bit, 0x3
-	SectionLength          uint16 // 12bit, 5byte
-	TransportStreamId      uint16 // 16bit
-	Reserved1              uint8  // 2bit
-	VersionNumber          uint8  // 5bit
-	CurrentNextIndicator   uint8  // 1bit
-	SectionNumber          uint8  // 8bit
-	LastSectionNumber      uint8  // 8bit
+	SectionLength          uint16 // 12bit, 表示后面还有多少字节 包括CRC32
+	TransportStreamId      uint16 // 16bit, 传输流id, 区别与其他路流id
+	Reserved1              uint8  // 2bit, 保留位
+	VersionNumber          uint8  // 5bit, 范围0-31，表示PAT的版本号
+	CurrentNextIndicator   uint8  // 1bit, 是当前有效还是下一个有效
+	SectionNumber          uint8  // 8bit, PAT可能分为多段传输，第一段为00，以后每个分段加1，最多可能有256个分段
+	LastSectionNumber      uint8  // 8bit, 最后一个分段的号码
 	ProgramNumber          uint16 // 16bit, arr 4byte,  0 is NetworkPid
 	Reserved2              uint8  // 3bit, arr
 	PID                    uint16 // 13bit, arr, NetworkPid or ProgramMapPid
@@ -1011,33 +1039,34 @@ func PatCreate() (*Pat, []byte) {
 // StreamType             uint8  // 8bit, arr 5byte
 // 0x0f		Audio with ADTS transport syntax
 // 0x1b		H.264
+// 40bit = 5byte
 type PmtStream struct {
-	StreamType    uint8  // 8bit, arr 5byte
-	Reserved4     uint8  // 3bit, arr
-	ElementaryPID uint16 // 13bit, arr
-	Reserved5     uint8  // 4bit, arr
-	EsInfoLength  uint16 // 12bit, arr
+	StreamType    uint8  // 8bit, 节目数据类型
+	Reserved4     uint8  // 3bit,
+	ElementaryPID uint16 // 13bit, 节目数据类型对应的pid
+	Reserved5     uint8  // 4bit,
+	EsInfoLength  uint16 // 12bit, 私有数据长度
 }
 
 // 3 + 9 + 5*2 + 4 = 26byte
 type Pmt struct {
-	TableId                uint8  // 8bit, 固定值0x02, 3byte
-	SectionSyntaxIndicator uint8  // 1bit, 固定值0x1
-	Zero                   uint8  // 1bit
-	Reserved0              uint8  // 2bit
-	SectionLength          uint16 // 12bit, 9byte
-	ProgramNumber          uint16 // 16bit
-	Reserved1              uint8  // 2bit
-	VersionNumber          uint8  // 5bit
-	CurrentNextIndicator   uint8  // 1bit
-	SectionNumber          uint8  // 8bit
-	LastSectionNumber      uint8  // 8bit
-	Reserved2              uint8  // 3bit
-	PcrPID                 uint16 // 13bit
-	Reserved3              uint8  // 4bit
-	ProgramInfoLength      uint16 // 12bit
-	PmtStream              []PmtStream
-	CRC32                  uint32 // 32bit
+	TableId                uint8       // 8bit, 固定值0x02, 表示是PMT
+	SectionSyntaxIndicator uint8       // 1bit, 固定值0x1
+	Zero                   uint8       // 1bit, 固定值0x0
+	Reserved0              uint8       // 2bit, 0x3
+	SectionLength          uint16      // 12bit, 表示后面还有多少字节 包括CRC32
+	ProgramNumber          uint16      // 16bit, 不同节目此值不同 依次递增
+	Reserved1              uint8       // 2bit, 0x3
+	VersionNumber          uint8       // 5bit, 指示当前TS流中program_map_secton 的版本号
+	CurrentNextIndicator   uint8       // 1bit, 当该字段为1时表示当前传送的program_map_section可用，当该字段为0时，表示当前传送的program_map_section不可用，下一个TS的program_map_section有效。
+	SectionNumber          uint8       // 8bit, 0x0
+	LastSectionNumber      uint8       // 8bit, 0x0
+	Reserved2              uint8       // 3bit, 0x7
+	PcrPID                 uint16      // 13bit, pcr会在哪个pid包里出现，一般是视频包里，PcrPID设置为 0x1fff 表示没有pcr
+	Reserved3              uint8       // 4bit, 0xf
+	ProgramInfoLength      uint16      // 12bit, 节目信息描述的字节数, 通常为 0x0
+	PmtStream              []PmtStream // 40bit, 节目信息
+	CRC32                  uint32      // 32bit
 }
 
 func PmtCreate() (*Pmt, []byte) {
@@ -1054,7 +1083,7 @@ func PmtCreate() (*Pmt, []byte) {
 	pmt.SectionNumber = 0x0
 	pmt.LastSectionNumber = 0x0
 	pmt.Reserved2 = 0x7
-	pmt.PcrPID = 0x101 // ???
+	pmt.PcrPID = VideoPid
 	pmt.Reserved3 = 0xf
 	pmt.ProgramInfoLength = 0x0
 	pmt.PmtStream = make([]PmtStream, 2)
