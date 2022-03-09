@@ -20,6 +20,9 @@ const (
 	AppConf    = "sms.json"
 )
 
+//Go语言sync.Map(在并发环境中使用的map)
+//http://c.biancheng.net/view/34.html
+//https://blog.csdn.net/u010230794/article/details/82143179
 var (
 	h, v, d, u bool
 	c          string

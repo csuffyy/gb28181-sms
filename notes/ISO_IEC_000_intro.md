@@ -37,7 +37,7 @@ MPEG-7	ISO/IEC 15938
 ### Part 13: Intellectual Property Management and Protection (IPMP) extensions
 ### Part 14: MP4 file format
 ### Part 15: Advanced Video Coding (AVC) file format
-     AVCDecoderConfigurationRecord
+    AVCDecoderConfigurationRecord
 ### Part 16: Animation Framework eXtension (AFX)
 ### Part 17: Streaming text format
 ### Part 18: Font compression and streaming

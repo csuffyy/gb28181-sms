@@ -8,6 +8,7 @@ sms
 sms.log
 live_*/
 .vscode/
+tsCompare
 
 # Test binary, built with `go test -c`
 *.test

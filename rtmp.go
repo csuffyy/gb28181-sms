@@ -406,7 +406,7 @@ func MessageMerge(s *Stream, c *Chunk) (Chunk, error) {
 	var sc Chunk
 	i := 0
 	for {
-		s.log.Println("-------------------->> chunk", i)
+		//s.log.Println("-------------------->> chunk", i)
 		bh, err = ReadUint32(s.Conn, 1, BE)
 		if err != nil {
 			s.log.Println(err)
@@ -538,7 +538,7 @@ func ChunkAssemble(s *Stream, c *Chunk) error {
 	if size > s.ChunkSize {
 		size = s.ChunkSize
 	}
-	s.log.Printf("read data size is %d", size)
+	//s.log.Printf("read data size is %d", size)
 
 	buf := c.MsgData[c.MsgIndex : c.MsgIndex+size]
 	if _, err := s.Conn.Read(buf); err != nil {
@@ -757,22 +757,6 @@ func RtmpPublisher(s *Stream) {
 	}
 	Publishers[s.Key] = s
 
-	// 初始化hls的生产
-	folder := fmt.Sprintf("%s/hls", s.Key)
-	err := os.MkdirAll(folder, 0755)
-	if err != nil {
-		log.Println(err)
-		return
-	}
-	s.M3u8Path = fmt.Sprintf("%s/%s.m3u8", folder, s.Key)
-	s.log.Println("m3u8Path is", s.M3u8Path)
-	s.M3u8File, err = os.OpenFile(s.M3u8Path, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0644)
-	if err != nil {
-		log.Println(err)
-		return
-	}
-	s.HlsInfo.TsList = list.New()
-
 	go HlsCreator(s) // 开启hls生产协程
 	go RtmpSender(s) // 给所有播放者发送数据
 
@@ -849,7 +833,7 @@ func RtmpReceiver(s *Stream) error {
 	}
 
 	s.log.Printf("GopCacheMax=%d, GopCacheNum=%d, MediaDataLen=%d", s.GopCacheMax, s.GopCacheNum, s.MediaData.Len())
-	PrintList(s, s.MediaData)
+	//PrintList(s, s.MediaData)
 
 	s.DataChan <- &c
 	return nil
@@ -1240,15 +1224,15 @@ func GopCacheNew() GopCache {
 func GopCacheUpdate(s *Stream) {
 	// 1 先判断CacheData里的关键帧个数 是否达到GopCacheMax, 如果没有就直接存入并退出
 	// 2 如果达到, 就先删除CacheData里最早的Gop(含音频帧), 然后再存入
-	gc := s.GopCache
-	s.log.Printf("GopCacheMax=%d, GopCacheNum=%d", gc.GopCacheMax, gc.GopCacheNum)
-	if gc.GopCacheNum < gc.GopCacheMax {
+	s.log.Printf("GopCacheMax=%d, GopCacheNum=%d, MediaDataLen=%d", s.GopCacheMax, s.GopCacheNum, s.MediaData.Len())
+	if s.GopCacheNum < s.GopCacheMax {
 		return
 	}
 
+	var i uint
 	KeyFrameNum := 0
 	var n *list.Element
-	for e := gc.MediaData.Front(); e != nil; e = n {
+	for e := s.MediaData.Front(); e != nil; e = n {
 		v := (e.Value).(*Chunk)
 		//s.log.Printf("list show: %s, %d, %d", v.DataType, v.MsgLength, v.Timestamp)
 		if v.DataType == "VideoKeyFrame" {
@@ -1257,9 +1241,10 @@ func GopCacheUpdate(s *Stream) {
 		if KeyFrameNum == 2 {
 			break
 		}
-		s.log.Printf("list remove: %s, %d, %d", v.DataType, v.MsgLength, v.Timestamp)
+		s.log.Printf("list remove %d: %s, %d, %d", i, v.DataType, v.MsgLength, v.Timestamp)
 		n = e.Next()
-		gc.MediaData.Remove(e)
+		s.MediaData.Remove(e)
+		i++
 	}
 	s.GopCache.GopCacheNum--
 }
