@@ -400,6 +400,7 @@ func TsPacketCreate(s *Stream, pid uint16, data []byte) ([]byte, int) {
 		if s.AudioCounter > 0xf {
 			s.AudioCounter = 0x0
 		}
+		s.logHls.Printf("th.ContinuityCounter=%x", th.ContinuityCounter)
 	}
 	if pid == VideoPid {
 		th.ContinuityCounter = s.VideoCounter
@@ -415,16 +416,28 @@ func TsPacketCreate(s *Stream, pid uint16, data []byte) ([]byte, int) {
 	tsData[2] = uint8(th.PID & 0xff)
 	tsData[3] = (th.TransportScramblingControl&0x3)<<6 | (th.AdaptationFieldControl&0x3)<<4 | (th.ContinuityCounter & 0xf)
 
+	s.logHls.Printf("dataLen=%d, freeBuffLen=%d", dataLen, freeBuffLen)
 	if dataLen >= freeBuffLen {
 		dataLen = freeBuffLen
 		copy(tsData[4:4+dataLen], data)
 		freeBuffLen = 0
 	} else {
 		// 添加 adaptation(2字节) 填充 0xff
+		// 183 184 -> 185 184 这种情况 无法添加adaptation
+		// 182 184 -> 184 184 这种情况 刚好添加adaptation
+		// 181 184 -> 183 184 这种情况 添加adaptation 还能填充1个0xff
+		// 180 184 -> 182 184 这种情况 添加adaptation 还能填充2个0xff
+
 		// 188 = 4 + 2 + padLen + dataLen
 		padLen := 188 - 4 - 2 - dataLen
-		tsData[4] = uint8(padLen) + 1
+		tsData[4] = uint8(padLen + 1)
+		if padLen < 0 {
+			padLen = 0
+			dataLen -= 1
+			tsData[4] = 0x1
+		}
 		tsData[5] = 0x0
+		s.logHls.Printf("padLen=%d, tsData[4]=%d, tsData[5]=%d", padLen, tsData[4], tsData[5])
 		for i := 0; i < padLen; i++ {
 			tsData[6+i] = 0xff
 		}
