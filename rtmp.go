@@ -121,7 +121,7 @@ func NewStream(c net.Conn) *Stream {
 func GetTempLogFilename() string {
 	ts := utils.GetTimestamp("ms")
 	s := fmt.Sprintf("Stream_%d.log", ts)
-	log.Printf("stream tmp LogFile is %s", s)
+	log.Printf("stream temp LogFile is %s", s)
 	return s
 }
 
@@ -693,7 +693,7 @@ func RtmpServer() {
 			log.Println(err)
 			continue
 		}
-		log.Printf("tcp first byte is %#x", ui8)
+		log.Printf("tcp first byte is %#x, 0xff is flvPlay, 0x03 is rtmp", ui8)
 
 		if ui8 == 0xff {
 			go FlvPlayer(c)
@@ -932,6 +932,9 @@ func MetadataHandle(s *Stream, c *Chunk) error {
 	return nil
 }
 
+//AVCDecoderConfigurationRecord 包含着是H.264解码相关比较重要的sps和pps信息，再给AVC解码器送数据流之前一定要把sps和pps信息送出，否则的话解码器不能正常解码。
+//而且在解码器stop之后再次start之前，如seek、快进快退状态切换等，都需要重新送一遍sps和pps的信息.
+//AVCDecoderConfigurationRecord在FLV文件中一般情况也是出现1次，也就是第一个 video tag.
 func VideoHandle(s *Stream, c *Chunk) error {
 	FrameType := c.MsgData[0] >> 4 // 4bit
 	CodecId := c.MsgData[0] & 0xf  // 4bit

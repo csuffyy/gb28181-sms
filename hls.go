@@ -4,6 +4,7 @@ import (
 	"container/list"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"os"
 	"path"
@@ -62,7 +63,9 @@ type HlsInfo struct {
 // ...
 
 // 0x00000001 或 0x000001 是NALU单元的开始码
-//NalUnitType      uint8 // 5bit
+//NalRefIdc        uint8 // 2bit, 简写为NRI
+//似乎指示NALU的重要性, 如00的NALU解码器可以丢弃它而不影响图像的回放,取值越大, 表示当前NAL越重要, 需要优先受到保护.
+//NalUnitType      uint8 // 5bit, 简写为Type
 // nal_unit_type	1-23	表示单一Nal单元模式
 // nal_unit_type	24-27	表示聚合Nal单元模式, 本类型用于聚合多个NAL单元到单个RTP荷载中
 // nal_unit_type	28-29	表示分片Nal单元模式, 将NALU 单元拆分到多个RTP包中发送
@@ -87,11 +90,16 @@ type HlsInfo struct {
 // 28, FU-A 单个NALU size 大于 MTU 时候就要拆分 使用FU-A
 // 29, FU-B 不常用
 // 30-31 Reserved
+// +---------------+
+// |0|1|2|3|4|5|6|7|
+// +-+-+-+-+-+-+-+-+
+// |F|NRI|  Type   |
+// +---------------+
 // 1 + 2 + 5 = 1byte
 type NaluHeader struct {
-	ForbiddenZeroBit uint8 // 1bit
-	NalRefIdc        uint8 // 2bit, nal_unit_type = 7 8 或者5 的时候 NRI必须是11
-	NalUnitType      uint8 // 5bit
+	ForbiddenZeroBit uint8 // 1bit, 简写为F
+	NalRefIdc        uint8 // 2bit, 简写为NRI, NalUnitType = 5 或者 7 8 的时候 NRI必须是11
+	NalUnitType      uint8 // 5bit, 简写为Type
 }
 
 /**********************************************************/
@@ -400,7 +408,7 @@ func TsPacketCreate(s *Stream, pid uint16, data []byte) ([]byte, int) {
 		if s.AudioCounter > 0xf {
 			s.AudioCounter = 0x0
 		}
-		s.logHls.Printf("th.ContinuityCounter=%x", th.ContinuityCounter)
+		//s.logHls.Printf("th.ContinuityCounter=%x", th.ContinuityCounter)
 	}
 	if pid == VideoPid {
 		th.ContinuityCounter = s.VideoCounter
@@ -416,18 +424,16 @@ func TsPacketCreate(s *Stream, pid uint16, data []byte) ([]byte, int) {
 	tsData[2] = uint8(th.PID & 0xff)
 	tsData[3] = (th.TransportScramblingControl&0x3)<<6 | (th.AdaptationFieldControl&0x3)<<4 | (th.ContinuityCounter & 0xf)
 
-	s.logHls.Printf("dataLen=%d, freeBuffLen=%d", dataLen, freeBuffLen)
+	//s.logHls.Printf("dataLen=%d, freeBuffLen=%d", dataLen, freeBuffLen)
 	if dataLen >= freeBuffLen {
 		dataLen = freeBuffLen
 		copy(tsData[4:4+dataLen], data)
-		freeBuffLen = 0
 	} else {
 		// 添加 adaptation(2字节) 填充 0xff
-		// 183 184 -> 185 184 这种情况 无法添加adaptation
+		// 183 184 -> 185 184 这种情况 无法添加adaptation 需特殊处理
 		// 182 184 -> 184 184 这种情况 刚好添加adaptation
 		// 181 184 -> 183 184 这种情况 添加adaptation 还能填充1个0xff
 		// 180 184 -> 182 184 这种情况 添加adaptation 还能填充2个0xff
-
 		// 188 = 4 + 2 + padLen + dataLen
 		padLen := 188 - 4 - 2 - dataLen
 		tsData[4] = uint8(padLen + 1)
@@ -437,7 +443,7 @@ func TsPacketCreate(s *Stream, pid uint16, data []byte) ([]byte, int) {
 			tsData[4] = 0x1
 		}
 		tsData[5] = 0x0
-		s.logHls.Printf("padLen=%d, tsData[4]=%d, tsData[5]=%d", padLen, tsData[4], tsData[5])
+		//s.logHls.Printf("padLen=%d, tsData[4]=%d, tsData[5]=%d", padLen, tsData[4], tsData[5])
 		for i := 0; i < padLen; i++ {
 			tsData[6+i] = 0xff
 		}
@@ -474,7 +480,6 @@ func TsPacketCreatePatPmt(s *Stream, pid uint16, data []byte) ([]byte, int) {
 	if dataLen >= freeBuffLen {
 		dataLen = freeBuffLen
 		copy(tsData[5:5+dataLen], data)
-		freeBuffLen = 0
 	} else {
 		copy(tsData[5:5+dataLen], data)
 		freeBuffLen = 188 - 5 - dataLen
@@ -537,7 +542,6 @@ func TsPacketCreateKeyFrame(s *Stream, pid uint16, data []byte, pcr uint64) ([]b
 	if dataLen >= freeBuffLen {
 		dataLen = freeBuffLen
 		copy(tsData[12:12+dataLen], data)
-		freeBuffLen = 0
 	} else {
 		copy(tsData[12:12+dataLen], data)
 		freeBuffLen = 188 - 12 - dataLen
@@ -576,7 +580,6 @@ func TsPacketCreateInterFrame(s *Stream, pid uint16, data []byte) ([]byte, int) 
 	if dataLen >= freeBuffLen {
 		dataLen = freeBuffLen
 		copy(tsData[4:4+dataLen], data)
-		freeBuffLen = 0
 	} else {
 		copy(tsData[4:4+dataLen], data)
 		freeBuffLen = 188 - 4 - dataLen
@@ -590,6 +593,9 @@ func TsPacketCreateInterFrame(s *Stream, pid uint16, data []byte) ([]byte, int) 
 // tsHeader + pesHeader + adts + aacFrame
 // TsPacketCreateAacFrame() 音频帧的第一个tsPacket
 func TsPacketCreateAacFrame(s *Stream, pid uint16, data []byte) ([]byte, int) {
+	dataLen := len(data)
+	freeBuffLen := 188 - 4
+
 	var th TsHeader
 	th.SyncByte = 0x47
 	th.TransportErrorIndicator = 0x0
@@ -598,6 +604,9 @@ func TsPacketCreateAacFrame(s *Stream, pid uint16, data []byte) ([]byte, int) {
 	th.PID = pid
 	th.TransportScramblingControl = 0x0
 	th.AdaptationFieldControl = 0x1
+	if dataLen < freeBuffLen {
+		th.AdaptationFieldControl = 0x3
+	}
 	th.ContinuityCounter = s.AudioCounter
 	s.AudioCounter++
 	if s.AudioCounter > 0xf {
@@ -610,18 +619,22 @@ func TsPacketCreateAacFrame(s *Stream, pid uint16, data []byte) ([]byte, int) {
 	tsData[2] = uint8(th.PID & 0xff)
 	tsData[3] = (th.TransportScramblingControl&0x3)<<6 | (th.AdaptationFieldControl&0x3)<<4 | (th.ContinuityCounter & 0xf)
 
-	dataLen := len(data)
-	freeBuffLen := 188 - 4
 	if dataLen >= freeBuffLen {
 		dataLen = freeBuffLen
 		copy(tsData[4:4+dataLen], data)
-		freeBuffLen = 0
 	} else {
-		copy(tsData[4:4+dataLen], data)
-		freeBuffLen = 188 - 4 - dataLen
-		for i := 0; i < freeBuffLen; i++ {
-			tsData[i+4+dataLen] = 0xff
+		padLen := 188 - 4 - 2 - dataLen
+		tsData[4] = uint8(padLen + 1)
+		if padLen < 0 {
+			padLen = 0
+			dataLen -= 1
+			tsData[4] = 0x1
 		}
+		tsData[5] = 0x0
+		for i := 0; i < padLen; i++ {
+			tsData[6+i] = 0xff
+		}
+		copy(tsData[6+padLen:], data)
 	}
 	return tsData, dataLen
 }
@@ -793,7 +806,7 @@ func TsCreate(s *Stream, c *Chunk) bool {
 	s.logHls.Printf("c.Timestamp=%d, s.TsFirstTs=%d, s.TsExtInfo=%f, conf.HlsTsMaxTime=%d", c.Timestamp, s.TsFirstTs, s.TsExtInfo, conf.HlsTsMaxTime)
 
 	var tf bool
-	if s.TsPath == "" || uint32(s.TsExtInfo) >= conf.HlsTsMaxTime {
+	if s.TsPath == "" || (uint32(s.TsExtInfo) >= conf.HlsTsMaxTime && c.DataType == "VideoKeyFrame") {
 		s.logHls.Println("--->> TsFileCreate()")
 		TsFileCreate(s, c) // 新建TsFile, 并写入
 		tf = true
@@ -1342,13 +1355,17 @@ func M3u8Update(s *Stream, c *Chunk) {
 	s.TsList.PushBack(ti)
 	s.TsNum++
 
-	s.M3u8Data = fmt.Sprintf(m3u8Head, conf.HlsTsMaxTime, s.TsFirstSeq)
-
+	var tsMaxTime float64
 	var tis string
 	for e := s.TsList.Front(); e != nil; e = e.Next() {
 		ti = (e.Value).(TsInfo)
+		if tsMaxTime < ti.TsExtInfo {
+			tsMaxTime = ti.TsExtInfo
+		}
 		tis = fmt.Sprintf("%s\n%s", tis, ti.TsInfoStr)
 	}
+
+	s.M3u8Data = fmt.Sprintf(m3u8Head, uint32(math.Ceil(tsMaxTime)), s.TsFirstSeq)
 	s.M3u8Data = fmt.Sprintf("%s%s", s.M3u8Data, tis)
 	//s.logHls.Println(s.M3u8Data)
 
@@ -1459,7 +1476,7 @@ func GetPlayInfo(url string) (string, string, string) {
 func GetM3u8(w http.ResponseWriter, r *http.Request) ([]byte, error) {
 	app, stream, fn := GetPlayInfo(r.URL.String())
 	file := fmt.Sprintf("%s_%s/hls/%s_%s.m3u8", app, stream, app, stream)
-	log.Println(app, stream, fn, file)
+	//log.Println(app, stream, fn, file)
 
 	d, err := utils.ReadAllFile(file)
 	if err != nil {
@@ -1472,7 +1489,7 @@ func GetM3u8(w http.ResponseWriter, r *http.Request) ([]byte, error) {
 func GetTs(w http.ResponseWriter, r *http.Request) ([]byte, error) {
 	app, stream, fn := GetPlayInfo(r.URL.String())
 	file := fmt.Sprintf("%s_%s/hls/%s", app, stream, fn)
-	log.Println(app, stream, fn, file)
+	//log.Println(app, stream, fn, file)
 
 	d, err := utils.ReadAllFile(file)
 	if err != nil {
