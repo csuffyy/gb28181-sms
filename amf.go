@@ -5,7 +5,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
-	"livego/protocol/amf"
 	"reflect"
 )
 
@@ -518,7 +517,7 @@ func AmfPublishHandle(s *Stream, vs []interface{}) error {
 			}
 		case float64:
 			s.AmfInfo.TransactionId = v.(float64)
-		case amf.Object:
+		case Object:
 			s.log.Println("Untreated AmfType")
 		}
 	}
@@ -559,7 +558,7 @@ func AmfPlayHandle(s *Stream, vs []interface{}) error {
 			} else if k == 5 {
 				s.AmfInfo.Duration = v.(float64)
 			}
-		case amf.Object:
+		case Object:
 			s.log.Println("Untreated AmfType")
 		case bool:
 			s.AmfInfo.Reset = v.(bool)

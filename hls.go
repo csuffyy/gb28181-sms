@@ -1474,7 +1474,8 @@ func GetPlayInfo(url string) (string, string, string) {
 }
 
 func GetM3u8(w http.ResponseWriter, r *http.Request) ([]byte, error) {
-	app, stream, fn := GetPlayInfo(r.URL.String())
+	//app, stream, fn := GetPlayInfo(r.URL.String())
+	app, stream, _ := GetPlayInfo(r.URL.String())
 	file := fmt.Sprintf("%s_%s/hls/%s_%s.m3u8", app, stream, app, stream)
 	//log.Println(app, stream, fn, file)
 
