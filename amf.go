@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"reflect"
+	"strings"
 )
 
 const (
@@ -43,7 +44,7 @@ type AmfInfo struct {
 	PageUrl        string `amf:"pageUrl" json:"pageUrl"`
 	ObjectEncoding int    // 0 is AMF0, 3 is AMF3
 	Type           string
-	PublishName    string
+	PublishName    string  // 可能带参数 cctv1?app=pgm0&tm=xxx
 	PublishType    string  // live/ record/ append
 	StreamName     string  // play cmd use
 	Start          float64 // play cmd use
@@ -512,6 +513,8 @@ func AmfPublishHandle(s *Stream, vs []interface{}) error {
 				s.AmfInfo.CmdName = v.(string)
 			} else if k == 3 {
 				s.AmfInfo.PublishName = v.(string)
+				ss := strings.Split(s.AmfInfo.PublishName, "?")
+				s.AmfInfo.StreamName = ss[0]
 			} else if k == 4 {
 				s.AmfInfo.PublishType = v.(string)
 			}

@@ -143,7 +143,7 @@ func StreamLogRename(s *Stream, sType string) error {
 	// Stream_Timestamp.log 重命名为 cctv1_player_ip_port.log
 	var folder, fn string
 	if s.IsPublisher {
-		folder = fmt.Sprintf("%s_%s", s.AmfInfo.App, s.AmfInfo.PublishName)
+		folder = fmt.Sprintf("%s_%s", s.AmfInfo.App, s.AmfInfo.StreamName)
 		fn = fmt.Sprintf("%s/%s_publisher_%s_%s.log", folder, folder, sType, s.RemoteAddr)
 	} else {
 		folder = fmt.Sprintf("%s_%s", s.AmfInfo.App, s.AmfInfo.StreamName)
@@ -746,7 +746,7 @@ func RtmpHandler(c net.Conn) {
 
 func RtmpPublisher(s *Stream) {
 	s.Key = fmt.Sprintf("%s_%s", s.AmfInfo.App,
-		s.AmfInfo.PublishName)
+		s.AmfInfo.StreamName)
 	s.log.Println("publisher key is", s.Key)
 
 	_, ok := Publishers[s.Key]
