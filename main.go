@@ -3,12 +3,17 @@ package main
 import (
 	"encoding/json"
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime"
 	"syscall"
 	"utils"
+
+	// 调试时使用，线上最好关闭
+	_ "net/http/pprof"
 
 	"github.com/kardianos/service"
 	"github.com/natefinch/lumberjack"
@@ -18,6 +23,7 @@ const (
 	AppName    = "sms"
 	AppVersion = "0.0.1"
 	AppConf    = "sms.json"
+	//AppConf = "/usr/local/sms/sms.json"
 )
 
 //Go语言sync.Map(在并发环境中使用的map)
@@ -31,18 +37,22 @@ var (
 )
 
 type Config struct {
-	RtmpListen   string
-	HttpListen   string
-	HttpsListen  string
-	HttpsCrt     string
-	HttpsKey     string
-	HttpsUse     bool
-	HlsM3u8TsNum uint32
-	HlsTsMaxTime uint32
-	LogFile      string
-	LogFileSize  int
-	LogFileNum   int
-	LogSaveDay   int
+	RtmpListen    string
+	HttpListen    string
+	HttpsListen   string
+	HttpsCrt      string
+	HttpsKey      string
+	HttpsUse      bool
+	CpuNumUse     int
+	WorkDir       string
+	LogFile       string
+	LogFileSize   int
+	LogFileNum    int
+	LogSaveDay    int
+	LogStreamPath string
+	HlsM3u8TsNum  uint32
+	HlsTsMaxTime  uint32
+	HlsSavePath   string
 }
 
 func InitConf(file string) {
@@ -55,11 +65,24 @@ func InitConf(file string) {
 	if err != nil {
 		log.Fatalln(err)
 	}
-	log.Printf("%#v", conf)
+
+	ncpu := runtime.NumCPU()
+	if conf.CpuNumUse < ncpu {
+		ncpu = conf.CpuNumUse
+	}
+	runtime.GOMAXPROCS(ncpu)
+
+	conf.CpuNumUse = ncpu
+	conf.WorkDir, _ = os.Getwd()
+
+	conf.LogFile = fmt.Sprintf("%s/%s", conf.WorkDir, conf.LogFile)
+	conf.LogStreamPath = fmt.Sprintf("%s/%s", conf.WorkDir, conf.LogStreamPath)
+	conf.HlsSavePath = fmt.Sprintf("%s/%s", conf.WorkDir, conf.HlsSavePath)
 }
 
 func InitLog(file string) {
 	log.SetFlags(log.LstdFlags | log.Lshortfile) // 前台打印
+	log.Printf("%#v", conf)
 	return
 	l := new(lumberjack.Logger)
 	l.Filename = file
@@ -70,7 +93,7 @@ func InitLog(file string) {
 	log.SetOutput(l)
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	log.Println("==================================================")
-	log.Println("== ", AppName, " version:", AppVersion)
+	log.Println("== ", AppName, "version:", AppVersion)
 	log.Println("== StartTime:", utils.GetYMDHMS())
 	log.Println("== ByteOrder:", GetByteOrder())
 	log.Println("==================================================")

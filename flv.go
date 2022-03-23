@@ -28,7 +28,9 @@ func FlvRecv(fpi FlvPlayInfo) (net.Conn, error) {
 	}
 	//log.Println(data)
 
-	c, err := net.Dial("tcp", "127.0.0.1:1935")
+	// 127.0.0.1:1935, 配置文件中的端口 可能会被修改
+	addr := fmt.Sprintf("127.0.0.1%s", conf.RtmpListen)
+	c, err := net.Dial("tcp", addr)
 	if err != nil {
 		log.Println(err)
 		return nil, err

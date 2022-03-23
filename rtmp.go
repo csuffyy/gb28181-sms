@@ -11,6 +11,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"path"
 	"utils"
 )
 
@@ -120,12 +121,18 @@ func NewStream(c net.Conn) *Stream {
 /**********************************************************/
 func GetTempLogFilename() string {
 	ts := utils.GetTimestamp("ms")
-	s := fmt.Sprintf("Stream_%d.log", ts)
+	s := fmt.Sprintf("%sStream_%d.log", conf.LogStreamPath, ts)
 	log.Printf("stream temp LogFile is %s", s)
 	return s
 }
 
 func StreamLogCreate(fn string) (*log.Logger, error) {
+	err := os.MkdirAll(path.Dir(fn), 0755)
+	if err != nil {
+		log.Println(err)
+		return nil, err
+	}
+
 	f, err := os.Create(fn)
 	if err != nil {
 		log.Println(err)
@@ -142,12 +149,11 @@ func StreamLogRename(s *Stream, sType string) error {
 	// Stream_Timestamp.log 重命名为 cctv1_publisher.log
 	// Stream_Timestamp.log 重命名为 cctv1_player_ip_port.log
 	var folder, fn string
+	folder = fmt.Sprintf("%s%s_%s", conf.LogStreamPath, s.AmfInfo.App, s.AmfInfo.StreamName)
 	if s.IsPublisher {
-		folder = fmt.Sprintf("%s_%s", s.AmfInfo.App, s.AmfInfo.StreamName)
-		fn = fmt.Sprintf("%s/%s_publisher_%s_%s.log", folder, folder, sType, s.RemoteAddr)
+		fn = fmt.Sprintf("%s/%s_%s_publisher_%s_%s.log", folder, s.AmfInfo.App, s.AmfInfo.StreamName, sType, s.RemoteAddr)
 	} else {
-		folder = fmt.Sprintf("%s_%s", s.AmfInfo.App, s.AmfInfo.StreamName)
-		fn = fmt.Sprintf("%s/%s_player_%s_%s.log", folder, folder, sType, s.RemoteAddr)
+		fn = fmt.Sprintf("%s/%s_%s_player_%s_%s.log", folder, s.AmfInfo.App, s.AmfInfo.StreamName, sType, s.RemoteAddr)
 	}
 
 	err := os.MkdirAll(folder, 0755)
@@ -850,6 +856,7 @@ func RtmpSender(s *Stream) {
 	for {
 		c, ok := <-s.DataChan
 		if !ok {
+			close(s.HlsChan)
 			s.log.Println("RtmpSender close")
 			// 释放所有播放者和其他资源
 			s.log.Printf("release publisher %s resource", s.Key)

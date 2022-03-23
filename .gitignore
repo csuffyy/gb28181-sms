@@ -9,6 +9,9 @@ sms.log
 live_*/
 .vscode/
 tsCompare
+streamlog
+hls
+sms1.json
 
 # Test binary, built with `go test -c`
 *.test

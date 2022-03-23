@@ -280,10 +280,10 @@ func SetAdtsLength(d []byte, size uint16) {
 /**********************************************************/
 func HlsCreator(s *Stream) {
 	// 初始化hls的生产
-	s.LogHlsFn = fmt.Sprintf("%s/%s_hlsCreator_%s.log", s.Key, s.Key, s.RemoteAddr)
+	s.LogHlsFn = fmt.Sprintf("%s%s/%s_hlsCreator_%s.log", conf.LogStreamPath, s.Key, s.Key, s.RemoteAddr)
 	s.logHls, _ = StreamLogCreate(s.LogHlsFn)
 
-	folder := fmt.Sprintf("%s/hls", s.Key)
+	folder := fmt.Sprintf("%s%s", conf.HlsSavePath, s.Key)
 	err := os.MkdirAll(folder, 0755)
 	if err != nil {
 		log.Println(err)
@@ -649,7 +649,7 @@ func TsFileCreate(s *Stream, c *Chunk) {
 		M3u8Update(s, c)
 	}
 
-	s.TsPath = fmt.Sprintf("%s/hls/%s_%d.ts", s.Key, s.Key, s.TsLastSeq)
+	s.TsPath = fmt.Sprintf("%s%s/%s_%d.ts", conf.HlsSavePath, s.Key, s.Key, s.TsLastSeq)
 	s.logHls.Println(s.TsPath)
 
 	var err error
@@ -984,6 +984,7 @@ func PesDataCreateKeyFrame(s *Stream, c *Chunk, phd []byte) []byte {
 	SpsPpsDataLen := len(s.SpsPpsData)
 	MsgDataLen := int(c.MsgLength) - 9
 	dataLen := pesHeaderDataLen + SpsPpsDataLen + 6 + 3 + MsgDataLen
+	s.logHls.Println(pesHeaderDataLen, SpsPpsDataLen, 9, MsgDataLen, dataLen)
 	data := make([]byte, dataLen)
 
 	ss := 0
@@ -1007,7 +1008,7 @@ func PesDataCreateKeyFrame(s *Stream, c *Chunk, phd []byte) []byte {
 	//Uint32ToByte(0x00000001, data[ss:ee], BE)
 	ss = ee
 	ee += MsgDataLen
-	s.logHls.Printf("%x", c.MsgData)
+	//s.logHls.Printf("%x", c.MsgData)
 	copy(data[ss:], c.MsgData[9:])
 	return data
 }
@@ -1477,7 +1478,7 @@ func GetPlayInfo(url string) (string, string, string) {
 func GetM3u8(w http.ResponseWriter, r *http.Request) ([]byte, error) {
 	//app, stream, fn := GetPlayInfo(r.URL.String())
 	app, stream, _ := GetPlayInfo(r.URL.String())
-	file := fmt.Sprintf("%s_%s/hls/%s_%s.m3u8", app, stream, app, stream)
+	file := fmt.Sprintf("%s%s_%s/%s_%s.m3u8", conf.HlsSavePath, app, stream, app, stream)
 	//log.Println(app, stream, fn, file)
 
 	d, err := utils.ReadAllFile(file)
@@ -1490,7 +1491,7 @@ func GetM3u8(w http.ResponseWriter, r *http.Request) ([]byte, error) {
 
 func GetTs(w http.ResponseWriter, r *http.Request) ([]byte, error) {
 	app, stream, fn := GetPlayInfo(r.URL.String())
-	file := fmt.Sprintf("%s_%s/hls/%s", app, stream, fn)
+	file := fmt.Sprintf("%s%s_%s/%s", conf.HlsSavePath, app, stream, fn)
 	//log.Println(app, stream, fn, file)
 
 	d, err := utils.ReadAllFile(file)

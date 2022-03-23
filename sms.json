@@ -5,13 +5,16 @@
     "HttpsCrt":"ca/certificate.crt",
     "HttpsKey":"ca/private.key",
     "HttpsUse":false,
-    "===NOTE0===":"live_cctv1/hls/live_cctv1.m3u8",
-    "HlsM3u8TsNum":6,
-    "===NOTE1===":"TsMaxTime单位为秒",
-    "HlsTsMaxTime":5,
+    "CpuNumUse":1,
+    "===NOTE0===":"LogFileSize单位为MB,LogFileNum单位为个,LogSaveDay单位为天",
     "LogFile":"sms.log",
-    "===NOTE2===":"LogFileSize单位为MB,LogFileNum单位为个,LogSaveDay单位为天",
     "LogFileSize":300,
     "LogFileNum":10,
-    "LogSaveDay":15
+    "LogSaveDay":15,
+    "LogStreamPath":"streamlog/",
+    "===NOTE1===":"直播m3u8中ts的最大个数",
+    "HlsM3u8TsNum":6,
+    "===NOTE2===":"HlsTsMaxTime单位为秒, >= HlsTsMaxTime 且 为关键帧才会截断ts",
+    "HlsTsMaxTime":10,
+    "HlsSavePath":"hls/"
 }
