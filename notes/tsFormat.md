@@ -1,3 +1,6 @@
+https://so.csdn.net/so/search?q=TS%E5%8D%8F%E8%AE%AE%E8%A7%A3%E6%9E%90%E7%AC%AC&t=&u=
+https://www.cnblogs.com/jukan/p/5290239.html
+
 ###################################################
 ### rtmp流生成ts 注意事项
 ###################################################

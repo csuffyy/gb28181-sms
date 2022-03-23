@@ -451,12 +451,18 @@ func AmfConnectResponse(s *Stream, c *Chunk) error {
 	rc = CreateMessage(MsgTypeIdSetPeerBandwidth, 5, d)
 	MessageSplit(s, &rc)
 
-	s.log.Println("---> Set ChunkSize = 1024")
-	d = Uint32ToByte(1024, nil, BE)
+	var cs uint32 = 1024
+	// 128是默认值，对方可能发起过设置
+	if s.ChunkSize != 128 {
+		cs = s.ChunkSize
+	}
+
+	s.log.Printf("---> Set ChunkSize = %d", cs)
+	d = Uint32ToByte(cs, nil, BE)
 	rc = CreateMessage(MsgTypeIdSetChunkSize, 4, d)
 	MessageSplit(s, &rc)
 	// 这里必须设置为1024, 因为上面已通知对方ChunkSize=1024
-	s.ChunkSize = 1024
+	s.ChunkSize = cs
 
 	s.log.Println("---> Send Command Message")
 	rsps := make(Object)

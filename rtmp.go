@@ -313,7 +313,11 @@ func RtmpHandshakeServer(s *Stream) (err error) {
 /**********************************************************/
 /* rtmp chunk and message handle
 /**********************************************************/
-// DataType    string
+//MsgTypeId   uint32 // 8bit
+// rtmp 消息类型: 协议控制消息(1, 2, 3, 5, 6), 命令消息(20, 17),
+// 数据消息(18, 15), 共享对象消息(19, 16), 音频消息(8), 视频消息(9),
+// 聚合消息(22), 用户控制消息(4)
+//DataType    string
 // "Metadata", "VideoHeader", "AudioHeader",
 // "VideoKeyFrame", "VideoInterFrame", "AudioAacFrame"
 type Chunk struct {
@@ -362,9 +366,6 @@ func RtmpHandleMessage(s *Stream) (err error) {
 }
 
 func MessageHandle(s *Stream, c *Chunk) error {
-	// rtmp 消息类型: 协议控制消息(1, 2, 3, 5, 6), 命令消息(20, 17),
-	// 数据消息(18, 15), 共享对象消息(19, 16), 音频消息(8), 视频消息(9),
-	// 聚合消息(22), 用户控制消息(4)
 	switch c.MsgTypeId {
 	case MsgTypeIdSetChunkSize:
 		// 取值范围是 2的31次方 [1-2147483647]
@@ -795,7 +796,7 @@ func RtmpPublisher(s *Stream) {
 		// 11 AudioAacFrame 534 181
 		// 12 AudioAacFrame 443 205
 		// 测试使用, 控制接收 多少个Message
-		if i == 100 {
+		if i == 10 {
 			//s.Conn.Close()
 			//break
 		}
@@ -822,9 +823,11 @@ func RtmpReceiver(s *Stream) error {
 		AmfHandle(s, &c)
 	}
 	if c.MsgTypeId == MsgTypeIdAudio { // 8
+		//s.log.Printf("audio timestamp=%d", c.Timestamp)
 		AudioHandle(s, &c)
 	}
 	if c.MsgTypeId == MsgTypeIdVideo { // 9
+		//s.log.Printf("video timestamp=%d", c.Timestamp)
 		VideoHandle(s, &c)
 	}
 	if c.MsgTypeId == MsgTypeIdDataAmf3 || // 15

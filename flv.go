@@ -351,6 +351,7 @@ func FlvSendData(s *Stream, md *list.List) {
 		t.TagType = uint8(c.MsgTypeId)
 		t.DataSize = c.MsgLength
 		t.Timestamp = c.Timestamp
+		//s.log.Printf("@@@ send timestamp=%d", t.Timestamp)
 		t.TimeExtend = 0x0
 		t.StreamId = c.MsgStreamId
 		t.Data = nil

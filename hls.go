@@ -1007,6 +1007,7 @@ func PesDataCreateKeyFrame(s *Stream, c *Chunk, phd []byte) []byte {
 	//Uint32ToByte(0x00000001, data[ss:ee], BE)
 	ss = ee
 	ee += MsgDataLen
+	s.logHls.Printf("%x", c.MsgData)
 	copy(data[ss:], c.MsgData[9:])
 	return data
 }
