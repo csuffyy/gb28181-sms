@@ -12,6 +12,7 @@ import (
 	"net"
 	"os"
 	"path"
+	"time"
 	"utils"
 )
 
@@ -751,6 +752,14 @@ func RtmpHandler(c net.Conn) {
 	}
 }
 
+func RtmpPublishStop(s *Stream) {
+	time.Sleep(1 * time.Second)
+	close(s.DataChan)
+	close(s.HlsChan)
+	s.Conn.Close()
+	delete(Publishers, s.Key)
+}
+
 func RtmpPublisher(s *Stream) {
 	s.Key = fmt.Sprintf("%s_%s", s.AmfInfo.App,
 		s.AmfInfo.StreamName)
@@ -772,16 +781,16 @@ func RtmpPublisher(s *Stream) {
 	for {
 		s.log.Println("====================>> message", i)
 		if s.TransmitSwitch == "off" {
-			s.log.Printf("publisher %s close", s.Key)
-			s.Conn.Close()
+			s.log.Printf("%s RtmpPublisher stop", s.Key)
+			RtmpPublishStop(s)
 			return
 		}
 
 		// 接收数据 和 传递数据给发送者
 		if err := RtmpReceiver(s); err != nil {
 			s.log.Println(err)
-			s.log.Println("The connect closed by peer")
-			s.Conn.Close()
+			s.log.Printf("%s RtmpPublisher stop", s.Key)
+			RtmpPublishStop(s)
 			return
 		}
 
@@ -818,7 +827,6 @@ func RtmpReceiver(s *Stream) error {
 	if c, err = MessageMerge(s, nil); err != nil {
 		s.log.Println(err)
 		s.log.Println("RtmpReceiver close")
-		close(s.DataChan)
 		return err
 	}
 	SendAckMessage(s, c.MsgLength)
@@ -826,19 +834,24 @@ func RtmpReceiver(s *Stream) error {
 	//s.log.Printf("%x", c.MsgData)
 
 	if c.MsgTypeId == MsgTypeIdCmdAmf0 { // 20
-		AmfHandle(s, &c)
+		err = AmfHandle(s, &c)
 	}
 	if c.MsgTypeId == MsgTypeIdAudio { // 8
 		//s.log.Printf("audio timestamp=%d", c.Timestamp)
-		AudioHandle(s, &c)
+		err = AudioHandle(s, &c)
 	}
 	if c.MsgTypeId == MsgTypeIdVideo { // 9
 		//s.log.Printf("video timestamp=%d", c.Timestamp)
-		VideoHandle(s, &c)
+		err = VideoHandle(s, &c)
 	}
 	if c.MsgTypeId == MsgTypeIdDataAmf3 || // 15
 		c.MsgTypeId == MsgTypeIdDataAmf0 { // 18
 		MetadataHandle(s, &c)
+	}
+
+	if err != nil {
+		s.log.Println(err)
+		return err
 	}
 
 	s.log.Printf("GopCacheMax=%d, GopCacheNum=%d, MediaDataLen=%d", s.GopCacheMax, s.GopCacheNum, s.MediaData.Len())
@@ -856,11 +869,7 @@ func RtmpSender(s *Stream) {
 	for {
 		c, ok := <-s.DataChan
 		if !ok {
-			close(s.HlsChan)
-			s.log.Println("RtmpSender close")
-			// 释放所有播放者和其他资源
-			s.log.Printf("release publisher %s resource", s.Key)
-			delete(Publishers, s.Key)
+			s.log.Printf("%s RtmpSender stop", s.Key)
 			return
 		}
 		s.HlsChan <- c // 发送数据给hls生产协程
@@ -1052,8 +1061,12 @@ func VideoHandle(s *Stream, c *Chunk) error {
 			GopCacheUpdate(s)
 		}
 	} else {
-		// Empty
-		s.log.Println("This frame is AVC end of sequence")
+		// ffmpeg 结束推流时 会发送 AVCPacketType=2 的视频关键帧
+		// 此时 MsgLength=5, 这帧数据不能往下发, 会引起hls生产崩溃
+		// 崩溃的函数是 PesDataCreateKeyFrame()
+		err := fmt.Errorf("This frame is AVC end of sequence")
+		s.log.Println(err)
+		return err
 	}
 
 	s.log.Printf("AVCPacketType=%d, Composition=%d, DataLen=%d",

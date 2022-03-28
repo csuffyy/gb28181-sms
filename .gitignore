@@ -4,14 +4,12 @@
 *.dll
 *.so
 *.dylib
+.DS_Store
+hls
 sms
 sms.log
-live_*/
-.vscode/
-tsCompare
 streamlog
-hls
-sms1.json
+tests/FlvParser/
 
 # Test binary, built with `go test -c`
 *.test

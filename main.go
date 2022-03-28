@@ -93,7 +93,7 @@ func InitLog(file string) {
 	log.SetOutput(l)
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	log.Println("==================================================")
-	log.Println("== ", AppName, "version:", AppVersion)
+	log.Println("== ", AppName, "Version:", AppVersion)
 	log.Println("== StartTime:", utils.GetYMDHMS())
 	log.Println("== ByteOrder:", GetByteOrder())
 	log.Println("==================================================")
@@ -118,6 +118,7 @@ type program struct{}
 func (p *program) run() {
 	InitConf(c)
 	InitLog(conf.LogFile)
+	log.Printf("os:%s, cpuArch:%s", runtime.GOOS, runtime.GOARCH)
 	Publishers = make(map[string]*Stream)
 
 	go RtmpServer()
