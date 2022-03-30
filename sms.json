@@ -16,5 +16,11 @@
     "HlsM3u8TsNum":6,
     "===NOTE2===":"HlsTsMaxTime单位为秒, >= HlsTsMaxTime 且 为关键帧才会截断ts",
     "HlsTsMaxTime":10,
-    "HlsSavePath":"hls/"
+    "HlsSavePath":"hls/",
+    "Gb28181":{
+        "Enable":true,
+        "SipListen":":5060",
+        "RtpListen":":9000",
+        "RtcpListen":":9001"
+    }
 }

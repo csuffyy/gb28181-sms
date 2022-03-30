@@ -303,7 +303,7 @@ func HlsCreator(s *Stream) {
 	for {
 		c, ok := <-s.HlsChan
 		if !ok {
-			s.logHls.Printf("%s HlsCreator stop", s, Key)
+			s.logHls.Printf("%s HlsCreator stop", s.Key)
 			return
 		}
 		s.logHls.Printf("-------------------->> chunk %d", i)

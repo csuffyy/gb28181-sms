@@ -693,7 +693,7 @@ func RtmpServer() {
 			log.Println(err)
 			continue
 		}
-		log.Println("---------->> new tcp connect")
+		log.Println("---------->> new tcp(rtmp) connect")
 		log.Println("RemoteAddr:", c.RemoteAddr().String())
 
 		ui8, err := ReadUint8(c)

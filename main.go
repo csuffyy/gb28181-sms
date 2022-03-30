@@ -36,6 +36,9 @@ var (
 	Publishers map[string]*Stream // App_PublishName
 )
 
+// json嵌套的解析 有2点要注意 否则 获取不到内层json的值
+// 1.变量名 必须跟json外层字段名一样, 数据类型名 可以随便定义
+// 2.不能用 简写, 必须写全变量名和数据类型名, 两者一样也行
 type Config struct {
 	RtmpListen    string
 	HttpListen    string
@@ -53,6 +56,14 @@ type Config struct {
 	HlsM3u8TsNum  uint32
 	HlsTsMaxTime  uint32
 	HlsSavePath   string
+	Gb28181       Gb28181
+}
+
+type Gb28181 struct {
+	Enable     bool
+	SipListen  string
+	RtpListen  string
+	RtcpListen string
 }
 
 func InitConf(file string) {
@@ -122,7 +133,7 @@ func (p *program) run() {
 	Publishers = make(map[string]*Stream)
 
 	go RtmpServer()
-	//go SipServer()
+	go SipServer()
 
 	http.HandleFunc("/", HttpServer)
 
