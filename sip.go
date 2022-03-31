@@ -6,13 +6,13 @@ import (
 )
 
 func SipHandler(c net.Conn) {
-	var buf []byte
+	buf := make([]byte, 4096)
 	n, err := c.Read(buf)
 	if err != nil {
 		log.Println(err)
 		return
 	}
-	log.Println(n, string(buf))
+	log.Printf("len: %d, data: %s", n, string(buf))
 }
 
 func SipServer() {

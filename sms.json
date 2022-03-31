@@ -1,5 +1,5 @@
 {
-    "RtmpListen":":1935",
+    "RtmpListen":":1936",
     "HttpListen":":80",
     "HttpsListen":":443",
     "HttpsCrt":"ca/certificate.crt",
@@ -19,8 +19,24 @@
     "HlsSavePath":"hls/",
     "Gb28181":{
         "Enable":true,
-        "SipListen":":5060",
+        "ServerIp":"192.168.1.100",
+        "SipNetworkProtocol":"UDP",
+        "SipServerId":"34020000002000000001",
+        "SipServerDom":"3402000000",
+        "SipListen":":62097",
+        "NetworkProtocol":"UDP",
         "RtpListen":":9000",
-        "RtcpListen":":9001"
+        "RtcpListen":":9001",
+        "===NOTE3===":"Single单端口 Multiple多端口",
+        "PortMode":"Single",
+        "PortMin":9000,
+        "PortMax":9999,
+        "TimeoutAck":30,
+        "TimeoutIdel":30,
+        "TimeoutHeartbeat":30,
+        "QueryCatalogInterval":60,
+        "AutoInvite":true,
+        "AudioDrop":true,
+        "WaitKeyFrame":true
     }
 }
