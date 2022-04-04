@@ -1,0 +1,136 @@
+2022/04/03 20:51:12 sip.go:266: ---------->> new tcp(sip) connect
+2022/04/03 20:51:12 sip.go:267: RemoteAddr: 10.3.220.151:42341
+2022/04/03 20:51:12 sip.go:225: ------> sipRecv 0
+2022/04/03 20:51:12 sip.go:235: recvLen: 395, recvData: REGISTER sip:11000000122000000034@1100000012 SIP/2.0
+Via: SIP/2.0/TCP 10.3.220.151:42341;rport;branch=z9hG4bK1991199727
+From: <sip:11010000121310000034@1100000012>;tag=2122031756
+To: <sip:11010000121310000034@1100000012>
+Call-ID: 362874798
+CSeq: 1 REGISTER
+Contact: <sip:11010000121310000034@10.3.220.151:5060>
+Max-Forwards: 70
+User-Agent: IP Camera
+Expires: 3600
+Content-Length: 0
+
+
+2022/04/03 20:51:12 sip.go:120: sendLen: 417, sendData: SIP/2.0 401 Unauthorized
+Via: SIP/2.0/TCP 10.3.220.151:42341;rport=42341;received=172.20.25.20;branch=z9hG4bK1991199727
+From: <sip:11010000121310000034@1100000012>;tag=2122031756
+To: <sip:11010000121310000034@1100000012>;tag=z9hG4bK2078339622
+Call-ID: 362874798
+CSeq: 1 REGISTER
+WWW-Authenticate: Digest realm="1100000012",nonce="43b4f4162cfa5a35",opaque="040feeef38b042e6",algorithm=md5
+Content-Length:  0
+
+2022/04/03 20:51:12 sip.go:225: ------> sipRecv 1
+2022/04/03 20:51:12 sip.go:235: recvLen: 625, recvData: REGISTER sip:11000000122000000034@1100000012 SIP/2.0
+Via: SIP/2.0/TCP 10.3.220.151:42341;rport;branch=z9hG4bK141509445
+From: <sip:11010000121310000034@1100000012>;tag=2122031756
+To: <sip:11010000121310000034@1100000012>
+Call-ID: 362874798
+CSeq: 2 REGISTER
+Contact: <sip:11010000121310000034@10.3.220.151:5060>
+Authorization: Digest username="11010000121310000034", realm="1100000012", nonce="43b4f4162cfa5a35", uri="sip:11000000122000000034@1100000012", response="7d3289fc67090969aad1e2fcaaa9c3a0", algorithm=MD5, opaque="040feeef38b042e6"
+Max-Forwards: 70
+User-Agent: IP Camera
+Expires: 3600
+Content-Length: 0
+
+
+2022/04/03 20:51:12 sip.go:166: sendLen: 341, sendData: SIP/2.0 200 OK
+Via: SIP/2.0/TCP 10.3.220.151:42341;rport=42341;received=172.20.25.20;branch=z9hG4bK141509445
+From: <sip:11010000121310000034@1100000012>;tag=2122031756
+To: <sip:11010000121310000034@1100000012>;tag=z9hG4bK360295267
+Call-ID: 362874798
+CSeq: 2 REGISTER
+Data: 2022-04-03T20:51:12.413
+Expires: 3600
+Content-Length:  0
+
+2022/04/03 20:51:12 sip.go:225: ------> sipRecv 2
+2022/04/03 20:51:12 sip.go:235: recvLen: 635, recvData: REGISTER sip:11000000122000000034@1100000012 SIP/2.0
+Via: SIP/2.0/TCP 10.3.220.151:42341;rport;branch=z9hG4bK623359897
+From: <sip:11010000121310000034@1100000012>;tag=2122031756
+To: <sip:11010000121310000034@1100000012>
+Call-ID: 362874798
+CSeq: 3 REGISTER
+Contact: <sip:11010000121310000034@10.3.220.151:5060>;expires=0
+Authorization: Digest username="11010000121310000034", realm="1100000012", nonce="43b4f4162cfa5a35", uri="sip:11000000122000000034@1100000012", response="7d3289fc67090969aad1e2fcaaa9c3a0", algorithm=MD5, opaque="040feeef38b042e6"
+Max-Forwards: 70
+User-Agent: IP Camera
+Expires: 3600
+Content-Length: 0
+
+
+2022/04/03 20:51:12 sip.go:166: sendLen: 341, sendData: SIP/2.0 200 OK
+Via: SIP/2.0/TCP 10.3.220.151:42341;rport=42341;received=172.20.25.20;branch=z9hG4bK623359897
+From: <sip:11010000121310000034@1100000012>;tag=2122031756
+To: <sip:11010000121310000034@1100000012>;tag=z9hG4bK360295267
+Call-ID: 362874798
+CSeq: 3 REGISTER
+Data: 2022-04-03T20:51:12.416
+Expires: 3600
+Content-Length:  0
+
+2022/04/03 20:51:12 sip.go:225: ------> sipRecv 3
+2022/04/03 20:51:12 sip.go:235: recvLen: 626, recvData: REGISTER sip:11000000122000000034@1100000012 SIP/2.0
+Via: SIP/2.0/TCP 10.3.220.151:42341;rport;branch=z9hG4bK901316932
+From: <sip:11010000121310000034@1100000012>;tag=2122031756
+To: <sip:11010000121310000034@1100000012>
+Call-ID: 362874798
+CSeq: 4 REGISTER
+Contact: <sip:11010000121310000034@172.20.25.20:42341>
+Authorization: Digest username="11010000121310000034", realm="1100000012", nonce="43b4f4162cfa5a35", uri="sip:11000000122000000034@1100000012", response="7d3289fc67090969aad1e2fcaaa9c3a0", algorithm=MD5, opaque="040feeef38b042e6"
+Max-Forwards: 70
+User-Agent: IP Camera
+Expires: 3600
+Content-Length: 0
+
+
+2022/04/03 20:51:12 sip.go:166: sendLen: 341, sendData: SIP/2.0 200 OK
+Via: SIP/2.0/TCP 10.3.220.151:42341;rport=42341;received=172.20.25.20;branch=z9hG4bK901316932
+From: <sip:11010000121310000034@1100000012>;tag=2122031756
+To: <sip:11010000121310000034@1100000012>;tag=z9hG4bK360295267
+Call-ID: 362874798
+CSeq: 4 REGISTER
+Data: 2022-04-03T20:51:12.419
+Expires: 3600
+Content-Length:  0
+
+2022/04/03 20:51:12 sip.go:225: ------> sipRecv 4
+
+
+2022/04/03 20:51:17 sip.go:235: recvLen: 541, recvData: MESSAGE sip:11000000122000000034@1100000012 SIP/2.0
+Via: SIP/2.0/TCP 10.3.220.151:42341;rport;branch=z9hG4bK581882449
+From: <sip:11010000121310000034@1100000012>;tag=57873780
+To: <sip:11000000122000000034@1100000012>
+Call-ID: 934168825
+CSeq: 20 MESSAGE
+Content-Type: Application/MANSCDP+xml
+Max-Forwards: 70
+User-Agent: IP Camera
+Content-Length:   177
+
+<?xml version="1.0" encoding="GB2312"?>
+<Notify>
+<CmdType>Keepalive</CmdType>
+<SN>44</SN>
+<DeviceID>11010000121310000034</DeviceID>
+<Status>OK</Status>
+<Info>
+</Info>
+</Notify>
+
+2022/04/03 20:51:17 sip.go:215: sendLen: 293, sendData: SIP/2.0 200 OK
+Via: SIP/2.0/TCP 10.3.220.151:42341;rport=42341;received=172.20.25.20;branch=z9hG4bK581882449
+From: <sip:11010000121310000034@1100000012>;tag=57873780
+To: <sip:11010000121310000034@1100000012>;tag=z9hG4bK360295268
+Call-ID: 934168825
+CSeq: 20 MESSAGE
+Content-Length:  0
+
+2022/04/03 20:51:17 sip.go:225: ------> sipRecv 5
+
+
+2022/04/03 20:51:32 sip.go:231: read tcp 172.20.25.20:62097->10.3.220.151:42341: read: connection reset by peer

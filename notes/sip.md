@@ -1,4 +1,5 @@
 sip协议 RFC3261
+会话初始协议（Session Initiation Protocol）是一种信令协议，用于初始、管理和终止网络中的语音和视频会话
 
 ### SIP规定了六种方法
 INVITE      用于邀请用户或服务参加一个会话
@@ -7,6 +8,8 @@ CANCEL      用于取消一个Call-ID From To Cseq 字段相同正在进行的�
 OPTIONS     用于向服务器查询其能力
 BYE         用于结束会话
 REGISTER    用于客户向注册服务器注册用户位置等信息
+
+终端向代理服务器发送register消息注销，其头中expire字段设置为0
 
 ### SIP消息头字段
 via          给出请求消息迄今为止经过的路径
